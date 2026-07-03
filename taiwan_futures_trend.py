@@ -402,8 +402,27 @@ def analyze(bars, periods, body_thresh, streak_thresh, lookback):
     }
 
 
+# 持續性趨勢狀態表：state → (標題, 說明, 操作建議, 主色, 橫幅樣式)
+_STATE_META = {
+    "up_hold":    ("多方趨勢延續", "收盤仍站在5日線上，多方趨勢延續，順勢續抱多單。",
+                   "趨勢還在 · 續抱多單", "#E5484D", "act-hold-long"),
+    "down_hold":  ("空方趨勢延續", "收盤仍在5日線下，空方趨勢延續，順勢續抱空單。",
+                   "趨勢還在 · 續抱空單", "#3DAE73", "act-hold-short"),
+    "up_range":   ("盤整 · 跌破5日", "跌破5日線但守住10日線，趨勢暫歇進入盤整。",
+                   "趨勢暫歇 · 改短做、縮小部位", "#D98A3D", "act-scalp"),
+    "down_range": ("盤整 · 站上5日", "站上5日線但未過10日線，趨勢暫歇進入盤整。",
+                   "趨勢暫歇 · 改短做、縮小部位", "#D98A3D", "act-scalp"),
+    "turn_down":  ("短期轉空 · 跌破10日", "跌破10日線，多方趨勢告一段落、短期轉空。",
+                   "多單出場 · 偏空短做", "#3DAE73", "act-hold-short"),
+    "turn_up":    ("短期轉多 · 站上10日", "站上10日線，空方趨勢告一段落、短期轉多。",
+                   "空單回補 · 偏多短做", "#E5484D", "act-hold-long"),
+    "none":       ("無明確趨勢", "尚未形成明確趨勢，區間短做或觀望。",
+                   "觀望／短做", "#8B919B", "act-scalp"),
+}
+
+
 def build_history(bars, periods, body_thresh, streak_thresh, lookback, max_days=180):
-    """逐日回推：對每個可計算交易日，用當日（含）之前資料算判定。回傳由舊到新 list。"""
+    """逐日回推：對每個可計算交易日，用當日（含）之前資料算判定，並跑持續性趨勢狀態機。"""
     periods = sorted(periods)
     required = max(periods) + lookback + 2
     records = []
@@ -412,6 +431,61 @@ def build_history(bars, periods, body_thresh, streak_thresh, lookback, max_days=
             records.append(analyze(bars[:i + 1], periods, body_thresh, streak_thresh, lookback))
         except RuntimeError:
             continue
+
+    # 持續性趨勢狀態機：趨勢形成後，只有跌破5日(轉盤整)、跌破10日(轉空/轉多)才改變狀態
+    p5 = str(periods[0])
+    p10 = str(periods[1]) if len(periods) > 1 else str(periods[0])
+    side = "none"
+    for rec in records:
+        close = rec["last_close"]
+        ma5 = rec["ma_now"].get(p5)
+        ma10 = rec["ma_now"].get(p10)
+        if side == "none":
+            if rec["verdict"] == "trend" and rec["trend_dir"] == "long":
+                side = "long"
+            elif rec["verdict"] == "trend" and rec["trend_dir"] == "short":
+                side = "short"
+
+        if side == "long" and ma5 is not None and ma10 is not None:
+            if close < ma10:
+                state, side = "turn_down", "none"
+            elif close < ma5:
+                state = "up_range"
+            else:
+                state = "up_hold"
+        elif side == "short" and ma5 is not None and ma10 is not None:
+            if close > ma10:
+                state, side = "turn_up", "none"
+            elif close > ma5:
+                state = "down_range"
+            else:
+                state = "down_hold"
+        else:
+            state = "none"
+
+        headline, desc, act_label, accent, act_class = _STATE_META[state]
+        rec["state"] = state
+        rec["state_label"] = headline
+        rec["state_desc"] = desc
+        rec["action_label"] = act_label
+        rec["accent"] = accent
+        rec["action_class"] = act_class
+
+        # 箭頭：續抱狀態 + 均線發散 + 短線同向，累計 2 項給 1 箭頭、3 項給 2 箭頭
+        up_c = ((1 if state == "up_hold" else 0)
+                + (1 if rec["conv"] == "diverge" else 0)
+                + (1 if rec["momentum"] == "up" else 0))
+        dn_c = ((1 if state == "down_hold" else 0)
+                + (1 if rec["conv"] == "diverge" else 0)
+                + (1 if rec["momentum"] == "down" else 0))
+        if up_c > dn_c and up_c >= 2:
+            rec["signal_dir"], nn = "up", up_c
+        elif dn_c > up_c and dn_c >= 2:
+            rec["signal_dir"], nn = "down", dn_c
+        else:
+            rec["signal_dir"], nn = "none", 0
+        rec["signal_n"] = 2 if nn >= 3 else (1 if nn == 2 else 0)
+
     if max_days and len(records) > max_days:
         records = records[-max_days:]
     return records
@@ -649,12 +723,7 @@ function render(idx) {
   const r = hist[idx];
   const isLatest = idx === hist.length - 1;
   dateInput.value = r.last_date;
-  // 多方趨勢＝紅、空方趨勢＝綠；其餘用各判定既有色
-  let accent;
-  if (r.verdict === "trend" && r.trend_dir === "long") accent = "#E5484D";
-  else if (r.verdict === "trend" && r.trend_dir === "short") accent = "#3DAE73";
-  else accent = VC[r.verdict] || "#8B919B";
-  document.documentElement.style.setProperty("--accent", accent);
+  document.documentElement.style.setProperty("--accent", r.accent || "#8B919B");
 
   document.getElementById("meta").innerHTML =
     '<span>收盤日 <b class="mono">' + r.last_date + '</b></span>' +
@@ -662,13 +731,12 @@ function render(idx) {
     (isLatest ? '<span class="latest-badge">● 最新</span>'
               : '<span class="hist-badge">○ 歷史回推</span>');
 
-  document.getElementById("verdictLabel").textContent = r.verdict_label;
-  document.getElementById("verdictDesc").textContent = r.verdict_desc;
+  document.getElementById("verdictLabel").textContent = r.state_label;
+  document.getElementById("verdictDesc").textContent = r.state_desc;
 
   const act = document.getElementById("actionBox");
   act.textContent = r.action_label;
-  act.className = "action " + (r.action === "hold_long" ? "act-hold-long"
-                  : r.action === "hold_short" ? "act-hold-short" : "act-scalp");
+  act.className = "action " + (r.action_class || "act-scalp");
 
   // 均線型態：發散跟著趨勢方向上色（多紅空綠），收斂為橘色警訊
   const alignEl = document.getElementById("alignVal");
