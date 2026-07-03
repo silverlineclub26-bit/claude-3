@@ -339,13 +339,20 @@ def analyze(bars, periods, body_thresh, streak_thresh, lookback):
         verdict_label = "轉折觀察"
         verdict_desc = "訊號不一致，建議先縮小部位試單。"
 
-    # 三合一強訊號箭頭：方向趨勢 + 均線發散 + 短線同向，三者一致才給箭頭
-    if verdict == "trend" and trend_dir == "long" and conv == "diverge" and momentum == "up":
-        signal = "up"
-    elif verdict == "trend" and trend_dir == "short" and conv == "diverge" and momentum == "down":
-        signal = "down"
+    # 強訊號箭頭：三個條件（方向趨勢 / 均線發散 / 短線同向）累計，滿足 2 項給 1 箭頭、3 項給 2 箭頭
+    up_conds = ((1 if (verdict == "trend" and trend_dir == "long") else 0)
+                + (1 if conv == "diverge" else 0)
+                + (1 if momentum == "up" else 0))
+    down_conds = ((1 if (verdict == "trend" and trend_dir == "short") else 0)
+                  + (1 if conv == "diverge" else 0)
+                  + (1 if momentum == "down" else 0))
+    if up_conds > down_conds and up_conds >= 2:
+        signal_dir, n = "up", up_conds
+    elif down_conds > up_conds and down_conds >= 2:
+        signal_dir, n = "down", down_conds
     else:
-        signal = "none"
+        signal_dir, n = "none", 0
+    signal_n = 2 if n >= 3 else (1 if n == 2 else 0)
 
     recent_n = min(16, len(bars))
     recent_bodies = [
@@ -364,7 +371,8 @@ def analyze(bars, periods, body_thresh, streak_thresh, lookback):
         "momentum": momentum,
         "momentum_label": momentum_label,
         "trend_dir": trend_dir,
-        "signal": signal,
+        "signal_dir": signal_dir,
+        "signal_n": signal_n,
         "last_date": last["date"],
         "last_close": round(last["close"], 2),
         "spread_now": round(latest_spread, 3),
@@ -651,11 +659,15 @@ function render(idx) {
   }
   setDir("momVal", r.momentum, r.momentum_label);
 
-  // 三合一強訊號箭頭
+  // 強訊號箭頭：2 項→1 箭頭、3 項→2 箭頭
   const arrow = document.getElementById("signalArrow");
-  if (r.signal === "up") { arrow.textContent = "↑"; arrow.className = "signal-arrow sig-up"; }
-  else if (r.signal === "down") { arrow.textContent = "↓"; arrow.className = "signal-arrow sig-down"; }
-  else { arrow.textContent = ""; arrow.className = "signal-arrow"; }
+  if (r.signal_dir === "up" && r.signal_n > 0) {
+    arrow.textContent = "↑".repeat(r.signal_n); arrow.className = "signal-arrow sig-up";
+  } else if (r.signal_dir === "down" && r.signal_n > 0) {
+    arrow.textContent = "↓".repeat(r.signal_n); arrow.className = "signal-arrow sig-down";
+  } else {
+    arrow.textContent = ""; arrow.className = "signal-arrow";
+  }
 
   document.getElementById("stats").innerHTML =
     card("均線發散度", r.spread_now + "%", ST[r.spread_trend] || "—") +
