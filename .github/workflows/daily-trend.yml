@@ -1,0 +1,36 @@
+name: daily-trend
+
+on:
+  schedule:
+    # UTC 09:00 = 台灣 17:00，週一至週五（緩衝給 16:30 的資料更新時間）
+    - cron: "0 9 * * 1-5"
+  workflow_dispatch: {}   # 允許在 GitHub 網頁上手動觸發立即執行
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run analysis and generate index.html
+        env:
+          FINMIND_TOKEN: ${{ secrets.FINMIND_TOKEN }}
+        run: python taiwan_futures_trend.py
+
+      - name: Commit updated index.html
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "chore: 自動更新台指期趨勢判斷 index.html"
+          file_pattern: index.html
