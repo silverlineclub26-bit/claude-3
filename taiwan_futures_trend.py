@@ -440,8 +440,8 @@ def generate_html_report(assets, periods):
   .chip { font-size:12px; color:var(--muted); background:#1B1F26; border:1px solid var(--line);
     border-radius:20px; padding:6px 12px; }
   .chip b { font-weight:600; margin-left:5px; font-size:13px; }
-  .dir-up { color:var(--up); }
-  .dir-down { color:var(--down); }
+  .dir-up { color:var(--down); }   /* 多／偏多＝紅（台股慣例 漲紅） */
+  .dir-down { color:var(--up); }   /* 空／偏空＝綠（跌綠） */
   .dir-warn { color:#D98A3D; }
   .dir-flat { color:var(--muted); }
 
