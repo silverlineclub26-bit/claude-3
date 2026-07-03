@@ -278,38 +278,39 @@ def analyze(bars, periods, body_thresh, streak_thresh, lookback):
         else:
             break
 
-    # 方向：以最短均線相對最長均線的位置判定多頭／空頭排列
-    fast_p, slow_p = periods[0], periods[-1]
-    fast_ma, slow_ma = ma_series[fast_p][-1], ma_series[slow_p][-1]
-    if fast_ma is not None and slow_ma is not None and fast_ma != slow_ma:
-        if fast_ma > slow_ma:
-            direction, direction_label = "long", "多方"
-        else:
-            direction, direction_label = "short", "空方"
-    else:
-        direction, direction_label = "flat", "中性"
+    fast_p = periods[0]
+    fast_ma = ma_series[fast_p][-1]
 
-    # 短線趨勢：收盤價相對 5 日線（MA5）的位置 —— 站上偏多、跌破偏空
-    mom_close = closes[-1]
-    if fast_ma is not None and mom_close != fast_ma:
-        if mom_close > fast_ma:
-            momentum, momentum_label = "up", "偏多"
+    # 徽章1「均線收斂」：5 日與 10 日（兩條最短）均線的距離，近 3 根是收斂還是發散
+    p_a, p_b = periods[0], (periods[1] if len(periods) > 1 else periods[0])
+    sa, sb = ma_series[p_a], ma_series[p_b]
+    conv, conv_label = "flat", "—"
+    if (len(sa) > 3 and sa[-1] is not None and sb[-1] is not None
+            and sa[-4] is not None and sb[-4] is not None):
+        dist_now = abs(sa[-1] - sb[-1])
+        dist_ref = abs(sa[-4] - sb[-4])
+        if dist_now < dist_ref:
+            conv, conv_label = "converge", "收斂"
         else:
-            momentum, momentum_label = "down", "偏空"
+            conv, conv_label = "diverge", "發散"
+
+    # 徽章2「短線方向」：跌破5日且為實體黑K → 偏空；站上5日 → 偏多；其餘 → 中性
+    last_open = bars[-1]["open"]
+    last_close = closes[-1]
+    is_black_solid = (last_close < last_open) and (body_ratios[-1] >= 0.5)
+    if fast_ma is None:
+        momentum, momentum_label = "flat", "中性"
+    elif last_close > fast_ma:
+        momentum, momentum_label = "up", "偏多"
+    elif last_close < fast_ma and is_black_solid:
+        momentum, momentum_label = "down", "偏空"
     else:
         momentum, momentum_label = "flat", "中性"
 
     if spread_trend == "expanding" and streak < 2:
         verdict = "trend"
         verdict_label = "趨勢盤"
-        if direction == "long":
-            verdict_desc = ("均線間距擴大且呈多頭排列（MA%d 在 MA%d 之上），"
-                            "無連續小實體 K 棒，順勢偏多操作。" % (fast_p, slow_p))
-        elif direction == "short":
-            verdict_desc = ("均線間距擴大且呈空頭排列（MA%d 在 MA%d 之下），"
-                            "無連續小實體 K 棒，順勢偏空操作。" % (fast_p, slow_p))
-        else:
-            verdict_desc = "均線間距正在擴大，且沒有連續小實體 K 棒，適合波段順勢邏輯操作。"
+        verdict_desc = "均線間距正在擴大，且沒有連續小實體 K 棒，適合波段順勢邏輯操作。"
     elif spread_trend == "contracting" and streak >= streak_thresh:
         verdict = "range"
         verdict_label = "盤整盤"
@@ -334,8 +335,8 @@ def analyze(bars, periods, body_thresh, streak_thresh, lookback):
         "verdict": verdict,
         "verdict_label": verdict_label,
         "verdict_desc": verdict_desc,
-        "direction": direction,
-        "direction_label": direction_label,
+        "conv": conv,
+        "conv_label": conv_label,
         "momentum": momentum,
         "momentum_label": momentum_label,
         "last_date": last["date"],
@@ -441,6 +442,7 @@ def generate_html_report(assets, periods):
   .chip b { font-weight:600; margin-left:5px; font-size:13px; }
   .dir-up { color:var(--up); }
   .dir-down { color:var(--down); }
+  .dir-warn { color:#D98A3D; }
   .dir-flat { color:var(--muted); }
 
   .stats { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:22px; }
@@ -495,8 +497,8 @@ def generate_html_report(assets, periods):
     <div class="verdict-title"><span id="verdictLabel">—</span></div>
     <div class="verdict-desc" id="verdictDesc"></div>
     <div class="dirs">
-      <span class="chip">均線排列<b class="dir-val" id="alignVal"></b></span>
-      <span class="chip">短線趨勢<b class="dir-val" id="momVal"></b></span>
+      <span class="chip">均線收斂<b class="dir-val" id="alignVal"></b></span>
+      <span class="chip">短線方向<b class="dir-val" id="momVal"></b></span>
     </div>
   </div>
 
@@ -548,8 +550,9 @@ function card(k, v, sub) {
 function setDir(id, dir, label) {
   const el = document.getElementById(id);
   el.textContent = label;
-  const cls = (dir === "long" || dir === "up") ? "dir-up"
-            : (dir === "short" || dir === "down") ? "dir-down" : "dir-flat";
+  const cls = (dir === "up") ? "dir-up"
+            : (dir === "down") ? "dir-down"
+            : (dir === "converge") ? "dir-warn" : "dir-flat";
   el.className = "dir-val " + cls;
 }
 function nearestIdx(dateStr) {
@@ -597,7 +600,7 @@ function render(idx) {
   document.getElementById("verdictLabel").textContent = r.verdict_label;
   document.getElementById("verdictDesc").textContent = r.verdict_desc;
 
-  setDir("alignVal", r.direction, r.direction_label);
+  setDir("alignVal", r.conv, r.conv_label);
   setDir("momVal", r.momentum, r.momentum_label);
 
   document.getElementById("stats").innerHTML =
