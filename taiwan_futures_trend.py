@@ -307,10 +307,26 @@ def analyze(bars, periods, body_thresh, streak_thresh, lookback):
     else:
         momentum, momentum_label = "flat", "中性"
 
+    # 趨勢盤的方向：MA5 相對 MA60 的排列（之上多方、之下空方）
+    slow_ma = ma_series[periods[-1]][-1]
+    if fast_ma is not None and slow_ma is not None and fast_ma != slow_ma:
+        trend_dir = "long" if fast_ma > slow_ma else "short"
+    else:
+        trend_dir = "flat"
+
     if spread_trend == "expanding" and streak < 2:
         verdict = "trend"
-        verdict_label = "趨勢盤"
-        verdict_desc = "均線間距正在擴大，且沒有連續小實體 K 棒，適合波段順勢邏輯操作。"
+        if trend_dir == "long":
+            verdict_label = "多方趨勢"
+            verdict_desc = ("均線間距擴大且呈多頭排列（MA%d 在 MA%d 之上），"
+                            "無連續小實體 K 棒，順勢偏多操作。" % (fast_p, periods[-1]))
+        elif trend_dir == "short":
+            verdict_label = "空方趨勢"
+            verdict_desc = ("均線間距擴大且呈空頭排列（MA%d 在 MA%d 之下），"
+                            "無連續小實體 K 棒，順勢偏空操作。" % (fast_p, periods[-1]))
+        else:
+            verdict_label = "趨勢盤"
+            verdict_desc = "均線間距正在擴大，且沒有連續小實體 K 棒，適合波段順勢邏輯操作。"
     elif spread_trend == "contracting" and streak >= streak_thresh:
         verdict = "range"
         verdict_label = "盤整盤"
