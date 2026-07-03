@@ -289,6 +289,16 @@ def analyze(bars, periods, body_thresh, streak_thresh, lookback):
     else:
         direction, direction_label = "flat", "中性"
 
+    # 短線趨勢：收盤價相對 5 日線（MA5）的位置 —— 站上偏多、跌破偏空
+    mom_close = closes[-1]
+    if fast_ma is not None and mom_close != fast_ma:
+        if mom_close > fast_ma:
+            momentum, momentum_label = "up", "偏多"
+        else:
+            momentum, momentum_label = "down", "偏空"
+    else:
+        momentum, momentum_label = "flat", "中性"
+
     if spread_trend == "expanding" and streak < 2:
         verdict = "trend"
         verdict_label = "趨勢盤"
@@ -326,6 +336,8 @@ def analyze(bars, periods, body_thresh, streak_thresh, lookback):
         "verdict_desc": verdict_desc,
         "direction": direction,
         "direction_label": direction_label,
+        "momentum": momentum,
+        "momentum_label": momentum_label,
         "last_date": last["date"],
         "last_close": round(last["close"], 2),
         "spread_now": round(latest_spread, 3),
@@ -422,11 +434,14 @@ def generate_html_report(assets, periods):
   .verdict-tag { font-family:"IBM Plex Mono",monospace; font-size:12px; letter-spacing:.14em;
     color:var(--muted); text-transform:uppercase; }
   .verdict-title { font-size:34px; font-weight:700; color:var(--accent); margin:8px 0 12px; letter-spacing:.03em; }
-  .dir { display:none; margin-left:12px; font-size:15px; font-weight:600; padding:3px 12px;
-    border-radius:20px; vertical-align:middle; letter-spacing:.02em; }
-  .dir.long { color:var(--up); border:1px solid var(--up); }
-  .dir.short { color:var(--down); border:1px solid var(--down); }
   .verdict-desc { font-size:14.5px; color:var(--text); }
+  .dirs { display:flex; gap:10px; margin-top:16px; flex-wrap:wrap; }
+  .chip { font-size:12px; color:var(--muted); background:#1B1F26; border:1px solid var(--line);
+    border-radius:20px; padding:6px 12px; }
+  .chip b { font-weight:600; margin-left:5px; font-size:13px; }
+  .dir-up { color:var(--up); }
+  .dir-down { color:var(--down); }
+  .dir-flat { color:var(--muted); }
 
   .stats { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:22px; }
   .stat { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:14px; }
@@ -477,8 +492,12 @@ def generate_html_report(assets, periods):
   <div class="meta" id="meta"></div>
   <div class="verdict">
     <div class="verdict-tag">判定結果</div>
-    <div class="verdict-title"><span id="verdictLabel">—</span><span class="dir" id="dirBadge"></span></div>
+    <div class="verdict-title"><span id="verdictLabel">—</span></div>
     <div class="verdict-desc" id="verdictDesc"></div>
+    <div class="dirs">
+      <span class="chip">均線排列<b class="dir-val" id="alignVal"></b></span>
+      <span class="chip">短線趨勢<b class="dir-val" id="momVal"></b></span>
+    </div>
   </div>
 
   <div class="stats" id="stats"></div>
@@ -526,6 +545,13 @@ function card(k, v, sub) {
   return '<div class="stat"><div class="stat-k">' + k + '</div>' +
          '<div class="stat-v">' + v + '</div><div class="stat-sub">' + sub + '</div></div>';
 }
+function setDir(id, dir, label) {
+  const el = document.getElementById(id);
+  el.textContent = label;
+  const cls = (dir === "long" || dir === "up") ? "dir-up"
+            : (dir === "short" || dir === "down") ? "dir-down" : "dir-flat";
+  el.className = "dir-val " + cls;
+}
 function nearestIdx(dateStr) {
   let found = -1;
   for (let i = 0; i < DATES.length; i++) { if (DATES[i] <= dateStr) found = i; else break; }
@@ -571,14 +597,8 @@ function render(idx) {
   document.getElementById("verdictLabel").textContent = r.verdict_label;
   document.getElementById("verdictDesc").textContent = r.verdict_desc;
 
-  const dir = document.getElementById("dirBadge");
-  if (r.verdict === "trend" && (r.direction === "long" || r.direction === "short")) {
-    dir.textContent = r.direction === "long" ? "多方 ↑" : "空方 ↓";
-    dir.className = "dir " + r.direction;
-    dir.style.display = "inline-block";
-  } else {
-    dir.style.display = "none";
-  }
+  setDir("alignVal", r.direction, r.direction_label);
+  setDir("momVal", r.momentum, r.momentum_label);
 
   document.getElementById("stats").innerHTML =
     card("均線發散度", r.spread_now + "%", ST[r.spread_trend] || "—") +
