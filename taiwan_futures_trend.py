@@ -26,14 +26,19 @@ import requests
 FINMIND_TOKEN = os.environ.get("FINMIND_TOKEN", "").strip()
 FINMIND_URL = "https://api.finmindtrade.com/api/v4/data"
 KRAKEN_URL = "https://api.kraken.com/0/public/OHLC"
+YAHOO_URL = "https://query1.finance.yahoo.com/v8/finance/chart/"
+_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+       "(KHTML, like Gecko) Chrome/120 Safari/537.36")
 
 DELTA_EXPAND = 0.02      # 發散度趨勢：delta > 0.02 視為擴大中
 DELTA_CONTRACT = -0.02   # 發散度趨勢：delta < -0.02 視為收斂中
 
 # 要判斷的商品清單（頁籤順序即此順序）
 ASSETS = [
-    {"key": "MTX", "name": "台指期（小台）", "kind": "futures", "id": "MTX"},
-    {"key": "BTC", "name": "比特幣 BTC/USD", "kind": "crypto", "pair": "XBTUSD"},
+    {"key": "MTX", "name": "台指期", "kind": "futures", "id": "MTX"},
+    {"key": "BTC", "name": "比特幣", "kind": "crypto", "pair": "XBTUSD"},
+    {"key": "IXIC", "name": "那斯達克", "kind": "index", "symbol": "^IXIC"},
+    {"key": "SOX", "name": "費半", "kind": "index", "symbol": "^SOX"},
 ]
 
 
@@ -161,6 +166,51 @@ def fetch_crypto_daily(pair="XBTUSD", interval=1440):
     return bars
 
 
+def fetch_index_daily(symbol, rng="2y"):
+    """
+    呼叫 Yahoo Finance 圖表 API，回傳指數「一天一筆」日 K（由舊到新）。
+    symbol 例：^IXIC（那斯達克綜合）、^SOX（費城半導體）。需帶瀏覽器 User-Agent。
+    """
+    headers = {"User-Agent": _UA}
+    try:
+        resp = requests.get(YAHOO_URL + symbol, params={"range": rng, "interval": "1d"},
+                            headers=headers, timeout=30)
+    except requests.RequestException as e:
+        raise RuntimeError("呼叫 Yahoo Finance 失敗：%s" % e) from e
+
+    if resp.status_code != 200:
+        raise RuntimeError("Yahoo Finance 回傳 HTTP %s：%s" % (resp.status_code, resp.text[:200]))
+
+    payload = resp.json()
+    chart = payload.get("chart", {})
+    if chart.get("error"):
+        raise RuntimeError("Yahoo Finance 回傳錯誤：%s" % chart["error"])
+
+    results = chart.get("result") or []
+    if not results:
+        raise RuntimeError("Yahoo Finance 沒有回傳資料（symbol=%s）。" % symbol)
+    result = results[0]
+
+    ts = result.get("timestamp") or []
+    quote = (result.get("indicators", {}).get("quote") or [{}])[0]
+    opens, highs, lows, closes = (quote.get("open"), quote.get("high"),
+                                  quote.get("low"), quote.get("close"))
+    if not ts or not all([opens, highs, lows, closes]):
+        raise RuntimeError("Yahoo Finance 資料結構不完整（symbol=%s）。" % symbol)
+
+    bars = []
+    for i in range(len(ts)):
+        o, h, l, c = opens[i], highs[i], lows[i], closes[i]
+        if None in (o, h, l, c):
+            continue
+        d = datetime.datetime.fromtimestamp(int(ts[i]), datetime.timezone.utc).strftime("%Y-%m-%d")
+        bars.append({"date": d, "open": float(o), "max": float(h), "min": float(l), "close": float(c)})
+
+    if not bars:
+        raise RuntimeError("Yahoo Finance 資料整理後為空，無有效日 K。")
+    return bars
+
+
 # ---------------------------------------------------------------------------
 # 指標計算
 # ---------------------------------------------------------------------------
@@ -264,12 +314,7 @@ def analyze(bars, periods, body_thresh, streak_thresh, lookback):
 
     recent_n = min(16, len(bars))
     recent_bodies = [
-        {
-            "date": bars[i]["date"],
-            "ratio": round(body_ratios[i], 4),
-            "below_thresh": body_ratios[i] < body_thresh,
-            "strong": body_ratios[i] > 0.70,
-        }
+        {"date": bars[i]["date"], "ratio": round(body_ratios[i], 3)}
         for i in range(len(bars) - recent_n, len(bars))
     ]
 
@@ -347,10 +392,11 @@ def generate_html_report(assets, periods):
     color:var(--muted); text-transform:uppercase; }
   h1 { font-size:22px; font-weight:700; margin:6px 0 16px; letter-spacing:.02em; }
 
-  .tabs { display:flex; gap:8px; margin-bottom:16px; }
-  .tab { flex:1; text-align:center; padding:11px 8px; border:1px solid var(--line);
+  .tabs { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:16px; }
+  .tab { flex:1 1 0; min-width:64px; text-align:center; padding:11px 6px; border:1px solid var(--line);
     border-radius:9px; background:var(--panel); color:var(--muted); font-size:14px;
-    font-weight:500; cursor:pointer; user-select:none; transition:color .12s,border-color .12s; }
+    font-weight:500; cursor:pointer; user-select:none; white-space:nowrap;
+    transition:color .12s,border-color .12s; }
   .tab.active { color:var(--text); border-color:var(--accent);
     box-shadow:inset 0 0 0 1px var(--accent); }
 
@@ -451,7 +497,7 @@ def generate_html_report(assets, periods):
   <div class="ma-table" id="maTable"></div>
 
   <footer>
-    資料來源 FinMind（台指）／ Kraken（比特幣）· 台指每交易日 16:30 後更新<br>
+    資料來源 FinMind（台指）／ Kraken（比特幣）／ Yahoo Finance（那斯達克・費半）<br>
     本頁產生時間 __GEN__ · 歷史判定為依當日（含）之前資料回推計算<br>
     僅供研究參考，非投資建議
   </footer>
@@ -543,7 +589,7 @@ function render(idx) {
   let bars = "";
   r.recent_bodies.forEach(function (b) {
     const h = Math.max(2, Math.round(b.ratio * 100));
-    const color = b.below_thresh ? "#8B7EC8" : (b.strong ? "#D4A73C" : "#3A4049");
+    const color = b.ratio < r.body_thresh ? "#8B7EC8" : (b.ratio > 0.70 ? "#D4A73C" : "#3A4049");
     bars += '<div class="body-col" title="' + b.date + '：' + pct(b.ratio) + '">' +
             '<div class="body-bar-track"><div class="body-bar-fill" style="height:' + h + '%;background:' + color + ';"></div></div>' +
             '<div class="body-date">' + b.date.slice(5) + '</div></div>';
@@ -593,6 +639,8 @@ def build_asset(cfg, periods, body_thresh, streak_thresh, lookback, history_days
         bars = fetch_futures_daily(cfg["id"], start.isoformat(), end.isoformat())
     elif cfg["kind"] == "crypto":
         bars = fetch_crypto_daily(cfg["pair"])
+    elif cfg["kind"] == "index":
+        bars = fetch_index_daily(cfg["symbol"])
     else:
         raise RuntimeError("未知商品類型：%s" % cfg["kind"])
 
