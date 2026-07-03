@@ -30,13 +30,11 @@
 
   .picker { display:flex; align-items:center; gap:10px; margin-bottom:16px; }
   .picker label { font-size:12px; color:var(--muted); white-space:nowrap; }
-  .picker select {
-    flex:1; background:var(--panel); color:var(--text); border:1px solid var(--line);
+  .picker input[type=date] {
+    flex:1; min-width:0; background:var(--panel); color:var(--text); border:1px solid var(--line);
     border-radius:8px; padding:10px 12px; font-family:"IBM Plex Mono",monospace; font-size:14px;
-    -webkit-appearance:none; appearance:none;
-    background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'><path d='M2 4l4 4 4-4' stroke='%238B919B' stroke-width='1.5' fill='none'/></svg>");
-    background-repeat:no-repeat; background-position:right 12px center;
   }
+  .picker input[type=date]::-webkit-calendar-picker-indicator { filter:invert(.65); cursor:pointer; }
   .nav { display:flex; gap:8px; }
   .nav button { background:var(--panel); color:var(--text); border:1px solid var(--line);
     border-radius:8px; width:40px; height:40px; font-size:16px; cursor:pointer; }
@@ -92,7 +90,7 @@
 
   <div class="picker">
     <label>查看日期</label>
-    <select id="dateSel"></select>
+    <input type="date" id="dateInput">
     <div class="nav">
       <button id="prevBtn" title="前一交易日">‹</button>
       <button id="nextBtn" title="後一交易日">›</button>
@@ -123,7 +121,7 @@
 
   <footer>
     資料來源 FinMind TaiwanFuturesDaily · 每交易日 16:30 後更新<br>
-    本頁產生時間 2026-07-03 21:00 · 歷史判定為依當日（含）之前資料回推計算<br>
+    本頁產生時間 2026-07-03 21:03 · 歷史判定為依當日（含）之前資料回推計算<br>
     僅供研究參考，非投資建議
   </footer>
 </div>
@@ -141,21 +139,29 @@ function fmt(v, d) {
 }
 function pct(v) { return (v * 100).toFixed(0) + "%"; }
 
-const sel = document.getElementById("dateSel");
+const dateInput = document.getElementById("dateInput");
 const prevBtn = document.getElementById("prevBtn");
 const nextBtn = document.getElementById("nextBtn");
 
-// 下拉選單：由新到舊
-for (let i = HISTORY.length - 1; i >= 0; i--) {
-  const o = document.createElement("option");
-  o.value = i;
-  o.textContent = HISTORY[i].last_date + (i === HISTORY.length - 1 ? "（最新）" : "");
-  sel.appendChild(o);
+const DATES = HISTORY.map(function (r) { return r.last_date; });
+let curIdx = HISTORY.length - 1;
+dateInput.min = DATES[0];
+dateInput.max = DATES[DATES.length - 1];
+
+// 找 last_date <= 選定日期 的最後一筆交易日；若選的比最早還早，取第一筆
+function nearestIdx(dateStr) {
+  let found = -1;
+  for (let i = 0; i < DATES.length; i++) {
+    if (DATES[i] <= dateStr) found = i; else break;
+  }
+  return found >= 0 ? found : 0;
 }
 
 function render(idx) {
+  curIdx = idx;
   const r = HISTORY[idx];
   const isLatest = idx === HISTORY.length - 1;
+  dateInput.value = r.last_date;
   document.documentElement.style.setProperty("--accent", VC[r.verdict] || "#8B919B");
 
   document.getElementById("meta").innerHTML =
@@ -194,13 +200,11 @@ function render(idx) {
   nextBtn.disabled = idx === HISTORY.length - 1;
 }
 
-sel.addEventListener("change", function () { render(Number(sel.value)); });
-prevBtn.addEventListener("click", function () {
-  const i = Number(sel.value) - 1; if (i >= 0) { sel.value = i; render(i); }
+dateInput.addEventListener("change", function () {
+  if (dateInput.value) render(nearestIdx(dateInput.value));
 });
-nextBtn.addEventListener("click", function () {
-  const i = Number(sel.value) + 1; if (i <= HISTORY.length - 1) { sel.value = i; render(i); }
-});
+prevBtn.addEventListener("click", function () { if (curIdx > 0) render(curIdx - 1); });
+nextBtn.addEventListener("click", function () { if (curIdx < HISTORY.length - 1) render(curIdx + 1); });
 
 function card(k, v, sub) {
   return '<div class="stat"><div class="stat-k">' + k + '</div>' +
