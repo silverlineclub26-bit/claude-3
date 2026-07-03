@@ -5,12 +5,16 @@
 抓 FinMind 免費日 K 資料 → 計算均線 / 發散度 / K 棒實體比例 / 連續小實體根數
 → 判斷「趨勢盤 / 盤整盤 / 轉折觀察」→ 產出 index.html。
 
+支援查歷史：對每一個交易日，用「當日（含）之前」的資料回推判定，內嵌進網頁，
+可用日期下拉選單查看任一天（例如 4/1）當時會給的建議。
+
 由 GitHub Actions 每個交易日自動執行，index.html 推回 repo 後由 GitHub Pages 發布，
 手機瀏覽器加書籤即可查看，不需自己跑程式。
 """
 
 import os
 import sys
+import json
 import datetime
 
 import requests
@@ -148,7 +152,7 @@ def sma(values, period):
 
 def analyze(bars, periods, body_thresh, streak_thresh, lookback):
     """
-    執行趨勢／盤整判斷。
+    執行趨勢／盤整判斷（以 bars 的最後一根為「當日」）。
 
     參數
       bars          : fetch_futures_daily() 的輸出（由舊到新）
@@ -248,12 +252,11 @@ def analyze(bars, periods, body_thresh, streak_thresh, lookback):
 
     last = bars[-1]
     return {
-        "futures_id": None,  # 由 run() 補上
         "verdict": verdict,
         "verdict_label": verdict_label,
         "verdict_desc": verdict_desc,
         "last_date": last["date"],
-        "last_close": last["close"],
+        "last_close": round(last["close"], 2),
         "spread_now": round(latest_spread, 3),
         "spread_prev": round(prev_spread, 3),
         "spread_delta": round(delta, 3),
@@ -262,183 +265,152 @@ def analyze(bars, periods, body_thresh, streak_thresh, lookback):
         "streak": streak,
         "streak_thresh": streak_thresh,
         "body_thresh": body_thresh,
-        "periods": periods,
-        "ma_now": ma_now,
+        "ma_now": {str(p): (round(ma_now[p], 2) if ma_now[p] is not None else None) for p in periods},
         "recent_bodies": recent_bodies,
-        "bar_count": len(bars),
     }
 
 
+def build_history(bars, periods, body_thresh, streak_thresh, lookback, max_days=180):
+    """
+    對每一個「可計算」的交易日，用當日（含）之前的資料回推判定，
+    回傳由舊到新的每日判定 list（最多保留最近 max_days 天）。
+    """
+    periods = sorted(periods)
+    required = max(periods) + lookback + 2
+    records = []
+    for i in range(required - 1, len(bars)):
+        try:
+            records.append(analyze(bars[:i + 1], periods, body_thresh, streak_thresh, lookback))
+        except RuntimeError:
+            continue
+    if max_days and len(records) > max_days:
+        records = records[-max_days:]
+    return records
+
+
 # ---------------------------------------------------------------------------
-# 產生 HTML 報告
+# 產生 HTML 報告（內嵌歷史 + JS 日期選單）
 # ---------------------------------------------------------------------------
 
-_VERDICT_COLOR = {
-    "trend": "#D4A73C",   # 金色：趨勢盤
-    "range": "#8B7EC8",   # 紫色：盤整盤
-    "watch": "#D98A3D",   # 橙色：轉折觀察
-}
-
-_SPREAD_TREND_LABEL = {
-    "expanding": "擴大中 ↑",
-    "contracting": "收斂中 ↓",
-    "flat": "持平 →",
-}
-
-
-def _fmt(v, digits=0):
-    if v is None:
-        return "—"
-    if digits == 0:
-        return "{:,.0f}".format(v)
-    return ("{:,.%df}" % digits).format(v)
-
-
-def generate_html_report(result, futures_id):
-    """把 analyze() 的結果套進深色交易終端機風格的手機頁面，回傳完整 HTML 字串。"""
-    result = dict(result)
-    result["futures_id"] = futures_id
-    accent = _VERDICT_COLOR.get(result["verdict"], "#8B919B")
-
+def generate_html_report(history, futures_id, periods):
+    """把每日判定 list 內嵌進深色交易終端機風格頁面，支援日期下拉查歷史。"""
     gen_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
-
-    # 均線數值表
-    ma_rows = "".join(
-        '<div class="ma-row"><span class="ma-label">MA{p}</span>'
-        '<span class="ma-val">{v}</span></div>'.format(p=p, v=_fmt(result["ma_now"][p], 0))
-        for p in result["periods"]
-    )
-
-    # 近期實體比例長條
-    bar_cells = ""
-    for b in result["recent_bodies"]:
-        pct = max(2, round(b["ratio"] * 100))
-        if b["below_thresh"]:
-            color = "#8B7EC8"   # 紫：低於警戒值
-        elif b["strong"]:
-            color = "#D4A73C"   # 金：超過 70%
-        else:
-            color = "#3A4049"   # 灰：其餘
-        mmdd = b["date"][5:]
-        bar_cells += (
-            '<div class="body-col" title="{date}：{ratio:.0%}">'
-            '<div class="body-bar-track">'
-            '<div class="body-bar-fill" style="height:{pct}%;background:{color};"></div>'
-            '</div>'
-            '<div class="body-date">{mmdd}</div>'
-            '</div>'
-        ).format(date=b["date"], ratio=b["ratio"], pct=pct, color=color, mmdd=mmdd)
-
-    stat_cards = """
-      <div class="stat"><div class="stat-k">均線發散度</div><div class="stat-v">{spread_now}%</div>
-        <div class="stat-sub">{trend_label}</div></div>
-      <div class="stat"><div class="stat-k">近 {lookback} 根變動</div>
-        <div class="stat-v">{delta:+.2f}</div><div class="stat-sub">Δ 發散度</div></div>
-      <div class="stat"><div class="stat-k">連續小實體</div><div class="stat-v">{streak}</div>
-        <div class="stat-sub">門檻 {streak_thresh} 根</div></div>
-      <div class="stat"><div class="stat-k">實體警戒值</div><div class="stat-v">{body_thresh:.0%}</div>
-        <div class="stat-sub">低於即計數</div></div>
-    """.format(
-        spread_now=result["spread_now"],
-        trend_label=_SPREAD_TREND_LABEL.get(result["spread_trend"], "—"),
-        lookback=result["lookback"],
-        delta=result["spread_delta"],
-        streak=result["streak"],
-        streak_thresh=result["streak_thresh"],
-        body_thresh=result["body_thresh"],
-    )
+    data_json = json.dumps(history, ensure_ascii=False)
+    periods_json = json.dumps(sorted(periods))
 
     html = """<!doctype html>
 <html lang="zh-Hant">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>台指期 趨勢／盤整 判斷 · {futures_id}</title>
+<title>台指期 趨勢／盤整 判斷 · __FID__</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
 <style>
-  :root {{
+  :root {
     --bg:#0B0D10; --panel:#14171C; --line:#262B33;
     --text:#EDEAE3; --muted:#8B919B;
-    --accent:{accent};
+    --accent:#8B919B;
     --up:#3DAE73; --down:#E5484D;
-  }}
-  * {{ box-sizing:border-box; margin:0; padding:0; }}
-  body {{
+  }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body {
     background:var(--bg); color:var(--text);
     font-family:"Noto Sans TC",-apple-system,sans-serif;
     -webkit-font-smoothing:antialiased; line-height:1.5;
     padding:24px 16px 40px;
-  }}
-  .wrap {{ max-width:520px; margin:0 auto; }}
-  .mono {{ font-family:"IBM Plex Mono",monospace; }}
+  }
+  .wrap { max-width:520px; margin:0 auto; }
+  .mono { font-family:"IBM Plex Mono",monospace; }
 
-  .eyebrow {{ font-family:"IBM Plex Mono",monospace; font-size:12px; letter-spacing:.18em;
-    color:var(--muted); text-transform:uppercase; }}
-  h1 {{ font-size:22px; font-weight:700; margin:6px 0 14px; letter-spacing:.02em; }}
-  .meta {{ display:flex; flex-wrap:wrap; gap:6px 16px; font-family:"IBM Plex Mono",monospace;
-    font-size:12px; color:var(--muted); margin-bottom:22px; }}
-  .meta b {{ color:var(--text); font-weight:500; }}
+  .eyebrow { font-family:"IBM Plex Mono",monospace; font-size:12px; letter-spacing:.18em;
+    color:var(--muted); text-transform:uppercase; }
+  h1 { font-size:22px; font-weight:700; margin:6px 0 16px; letter-spacing:.02em; }
 
-  .verdict {{ background:var(--panel); border:1px solid var(--line);
-    border-left:4px solid var(--accent); border-radius:12px; padding:22px 20px; margin-bottom:20px; }}
-  .verdict-tag {{ font-family:"IBM Plex Mono",monospace; font-size:12px; letter-spacing:.14em;
-    color:var(--muted); text-transform:uppercase; }}
-  .verdict-title {{ font-size:34px; font-weight:700; color:var(--accent); margin:8px 0 12px; letter-spacing:.03em; }}
-  .verdict-desc {{ font-size:14.5px; color:var(--text); }}
+  .picker { display:flex; align-items:center; gap:10px; margin-bottom:16px; }
+  .picker label { font-size:12px; color:var(--muted); white-space:nowrap; }
+  .picker select {
+    flex:1; background:var(--panel); color:var(--text); border:1px solid var(--line);
+    border-radius:8px; padding:10px 12px; font-family:"IBM Plex Mono",monospace; font-size:14px;
+    -webkit-appearance:none; appearance:none;
+    background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'><path d='M2 4l4 4 4-4' stroke='%238B919B' stroke-width='1.5' fill='none'/></svg>");
+    background-repeat:no-repeat; background-position:right 12px center;
+  }
+  .nav { display:flex; gap:8px; }
+  .nav button { background:var(--panel); color:var(--text); border:1px solid var(--line);
+    border-radius:8px; width:40px; height:40px; font-size:16px; cursor:pointer; }
+  .nav button:disabled { opacity:.35; cursor:default; }
 
-  .stats {{ display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:22px; }}
-  .stat {{ background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:14px; }}
-  .stat-k {{ font-size:12px; color:var(--muted); margin-bottom:6px; }}
-  .stat-v {{ font-family:"IBM Plex Mono",monospace; font-size:22px; font-weight:600; }}
-  .stat-sub {{ font-family:"IBM Plex Mono",monospace; font-size:11px; color:var(--muted); margin-top:2px; }}
+  .meta { display:flex; flex-wrap:wrap; gap:6px 16px; font-family:"IBM Plex Mono",monospace;
+    font-size:12px; color:var(--muted); margin-bottom:18px; }
+  .meta b { color:var(--text); font-weight:500; }
+  .latest-badge { color:var(--up); }
+  .hist-badge { color:var(--muted); }
 
-  .section-title {{ font-size:13px; color:var(--muted); letter-spacing:.06em; margin:0 0 12px; }}
+  .verdict { background:var(--panel); border:1px solid var(--line);
+    border-left:4px solid var(--accent); border-radius:12px; padding:22px 20px; margin-bottom:20px; }
+  .verdict-tag { font-family:"IBM Plex Mono",monospace; font-size:12px; letter-spacing:.14em;
+    color:var(--muted); text-transform:uppercase; }
+  .verdict-title { font-size:34px; font-weight:700; color:var(--accent); margin:8px 0 12px; letter-spacing:.03em; }
+  .verdict-desc { font-size:14.5px; color:var(--text); }
 
-  .body-chart {{ background:var(--panel); border:1px solid var(--line); border-radius:10px;
-    padding:16px 12px 10px; margin-bottom:22px; }}
-  .body-bars {{ display:flex; align-items:flex-end; gap:5px; height:120px; }}
-  .body-col {{ flex:1; display:flex; flex-direction:column; align-items:center; height:100%; }}
-  .body-bar-track {{ flex:1; width:100%; display:flex; align-items:flex-end; }}
-  .body-bar-fill {{ width:100%; border-radius:3px 3px 0 0; }}
-  .body-date {{ font-family:"IBM Plex Mono",monospace; font-size:9px; color:var(--muted);
-    margin-top:6px; transform:rotate(-45deg); transform-origin:center; white-space:nowrap; }}
-  .legend {{ display:flex; gap:16px; font-size:11px; color:var(--muted); margin-top:16px; flex-wrap:wrap; }}
-  .legend i {{ display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:5px; vertical-align:middle; }}
+  .stats { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:22px; }
+  .stat { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:14px; }
+  .stat-k { font-size:12px; color:var(--muted); margin-bottom:6px; }
+  .stat-v { font-family:"IBM Plex Mono",monospace; font-size:22px; font-weight:600; }
+  .stat-sub { font-family:"IBM Plex Mono",monospace; font-size:11px; color:var(--muted); margin-top:2px; }
 
-  .ma-table {{ background:var(--panel); border:1px solid var(--line); border-radius:10px;
-    padding:6px 16px; margin-bottom:22px; }}
-  .ma-row {{ display:flex; justify-content:space-between; padding:10px 0; border-bottom:1px solid var(--line); }}
-  .ma-row:last-child {{ border-bottom:none; }}
-  .ma-label {{ font-family:"IBM Plex Mono",monospace; color:var(--muted); font-size:13px; }}
-  .ma-val {{ font-family:"IBM Plex Mono",monospace; font-size:15px; font-weight:500; }}
+  .section-title { font-size:13px; color:var(--muted); letter-spacing:.06em; margin:0 0 12px; }
 
-  footer {{ font-family:"IBM Plex Mono",monospace; font-size:11px; color:var(--muted);
-    text-align:center; margin-top:8px; line-height:1.7; }}
+  .body-chart { background:var(--panel); border:1px solid var(--line); border-radius:10px;
+    padding:16px 12px 10px; margin-bottom:22px; }
+  .body-bars { display:flex; align-items:flex-end; gap:5px; height:120px; }
+  .body-col { flex:1; display:flex; flex-direction:column; align-items:center; height:100%; }
+  .body-bar-track { flex:1; width:100%; display:flex; align-items:flex-end; }
+  .body-bar-fill { width:100%; border-radius:3px 3px 0 0; }
+  .body-date { font-family:"IBM Plex Mono",monospace; font-size:9px; color:var(--muted);
+    margin-top:6px; transform:rotate(-45deg); transform-origin:center; white-space:nowrap; }
+  .legend { display:flex; gap:16px; font-size:11px; color:var(--muted); margin-top:16px; flex-wrap:wrap; }
+  .legend i { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:5px; vertical-align:middle; }
+
+  .ma-table { background:var(--panel); border:1px solid var(--line); border-radius:10px;
+    padding:6px 16px; margin-bottom:22px; }
+  .ma-row { display:flex; justify-content:space-between; padding:10px 0; border-bottom:1px solid var(--line); }
+  .ma-row:last-child { border-bottom:none; }
+  .ma-label { font-family:"IBM Plex Mono",monospace; color:var(--muted); font-size:13px; }
+  .ma-val { font-family:"IBM Plex Mono",monospace; font-size:15px; font-weight:500; }
+
+  footer { font-family:"IBM Plex Mono",monospace; font-size:11px; color:var(--muted);
+    text-align:center; margin-top:8px; line-height:1.7; }
 </style>
 </head>
 <body>
 <div class="wrap">
-  <div class="eyebrow">{futures_id} · 日K自動判斷</div>
+  <div class="eyebrow">__FID__ · 日K自動判斷</div>
   <h1>趨勢／盤整判斷</h1>
-  <div class="meta">
-    <span>更新 <b>{gen_time}</b></span>
-    <span>收盤日 <b class="mono">{last_date}</b></span>
-    <span>收盤價 <b class="mono">{last_close}</b></span>
+
+  <div class="picker">
+    <label>查看日期</label>
+    <select id="dateSel"></select>
+    <div class="nav">
+      <button id="prevBtn" title="前一交易日">‹</button>
+      <button id="nextBtn" title="後一交易日">›</button>
+    </div>
   </div>
 
+  <div class="meta" id="meta"></div>
   <div class="verdict">
     <div class="verdict-tag">判定結果</div>
-    <div class="verdict-title">{verdict_label}</div>
-    <div class="verdict-desc">{verdict_desc}</div>
+    <div class="verdict-title" id="verdictTitle">—</div>
+    <div class="verdict-desc" id="verdictDesc"></div>
   </div>
 
-  <div class="stats">{stat_cards}</div>
+  <div class="stats" id="stats"></div>
 
-  <div class="section-title">近期 K 棒實體比例（最近 {recent_n} 根）</div>
+  <div class="section-title">近期 K 棒實體比例（最近 16 根）</div>
   <div class="body-chart">
-    <div class="body-bars">{bar_cells}</div>
+    <div class="body-bars" id="bodyBars"></div>
     <div class="legend">
       <span><i style="background:#8B7EC8;"></i>低於警戒值</span>
       <span><i style="background:#D4A73C;"></i>&gt;70% 強實體</span>
@@ -446,29 +418,106 @@ def generate_html_report(result, futures_id):
     </div>
   </div>
 
-  <div class="section-title">目前均線數值</div>
-  <div class="ma-table">{ma_rows}</div>
+  <div class="section-title">當日均線數值</div>
+  <div class="ma-table" id="maTable"></div>
 
   <footer>
     資料來源 FinMind TaiwanFuturesDaily · 每交易日 16:30 後更新<br>
-    本頁由 GitHub Actions 自動產生 · 僅供研究參考，非投資建議
+    本頁產生時間 __GEN__ · 歷史判定為依當日（含）之前資料回推計算<br>
+    僅供研究參考，非投資建議
   </footer>
 </div>
+
+<script>
+const FUTURES_ID = "__FID__";
+const PERIODS = __PERIODS__;
+const HISTORY = __DATA__;
+const VC = { trend:"#D4A73C", range:"#8B7EC8", watch:"#D98A3D" };
+const ST = { expanding:"擴大中 ↑", contracting:"收斂中 ↓", flat:"持平 →" };
+
+function fmt(v, d) {
+  if (v === null || v === undefined) return "—";
+  return Number(v).toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
+}
+function pct(v) { return (v * 100).toFixed(0) + "%"; }
+
+const sel = document.getElementById("dateSel");
+const prevBtn = document.getElementById("prevBtn");
+const nextBtn = document.getElementById("nextBtn");
+
+// 下拉選單：由新到舊
+for (let i = HISTORY.length - 1; i >= 0; i--) {
+  const o = document.createElement("option");
+  o.value = i;
+  o.textContent = HISTORY[i].last_date + (i === HISTORY.length - 1 ? "（最新）" : "");
+  sel.appendChild(o);
+}
+
+function render(idx) {
+  const r = HISTORY[idx];
+  const isLatest = idx === HISTORY.length - 1;
+  document.documentElement.style.setProperty("--accent", VC[r.verdict] || "#8B919B");
+
+  document.getElementById("meta").innerHTML =
+    '<span>收盤日 <b class="mono">' + r.last_date + '</b></span>' +
+    '<span>收盤價 <b class="mono">' + fmt(r.last_close, 0) + '</b></span>' +
+    (isLatest ? '<span class="latest-badge">● 最新</span>'
+              : '<span class="hist-badge">○ 歷史回推</span>');
+
+  document.getElementById("verdictTitle").textContent = r.verdict_label;
+  document.getElementById("verdictDesc").textContent = r.verdict_desc;
+
+  document.getElementById("stats").innerHTML =
+    card("均線發散度", r.spread_now + "%", ST[r.spread_trend] || "—") +
+    card("近 " + r.lookback + " 根變動", (r.spread_delta >= 0 ? "+" : "") + r.spread_delta.toFixed(2), "Δ 發散度") +
+    card("連續小實體", r.streak, "門檻 " + r.streak_thresh + " 根") +
+    card("實體警戒值", pct(r.body_thresh), "低於即計數");
+
+  let bars = "";
+  r.recent_bodies.forEach(function (b) {
+    const h = Math.max(2, Math.round(b.ratio * 100));
+    const color = b.below_thresh ? "#8B7EC8" : (b.strong ? "#D4A73C" : "#3A4049");
+    bars += '<div class="body-col" title="' + b.date + '：' + pct(b.ratio) + '">' +
+            '<div class="body-bar-track"><div class="body-bar-fill" style="height:' + h + '%;background:' + color + ';"></div></div>' +
+            '<div class="body-date">' + b.date.slice(5) + '</div></div>';
+  });
+  document.getElementById("bodyBars").innerHTML = bars;
+
+  let ma = "";
+  PERIODS.forEach(function (p) {
+    ma += '<div class="ma-row"><span class="ma-label">MA' + p + '</span>' +
+          '<span class="ma-val">' + fmt(r.ma_now[String(p)], 0) + '</span></div>';
+  });
+  document.getElementById("maTable").innerHTML = ma;
+
+  prevBtn.disabled = idx === 0;
+  nextBtn.disabled = idx === HISTORY.length - 1;
+}
+
+sel.addEventListener("change", function () { render(Number(sel.value)); });
+prevBtn.addEventListener("click", function () {
+  const i = Number(sel.value) - 1; if (i >= 0) { sel.value = i; render(i); }
+});
+nextBtn.addEventListener("click", function () {
+  const i = Number(sel.value) + 1; if (i <= HISTORY.length - 1) { sel.value = i; render(i); }
+});
+
+function card(k, v, sub) {
+  return '<div class="stat"><div class="stat-k">' + k + '</div>' +
+         '<div class="stat-v">' + v + '</div><div class="stat-sub">' + sub + '</div></div>';
+}
+
+// 預設顯示最新一天
+render(HISTORY.length - 1);
+</script>
 </body>
 </html>
-""".format(
-        futures_id=futures_id,
-        accent=accent,
-        gen_time=gen_time,
-        last_date=result["last_date"],
-        last_close=_fmt(result["last_close"], 0),
-        verdict_label=result["verdict_label"],
-        verdict_desc=result["verdict_desc"],
-        stat_cards=stat_cards,
-        recent_n=len(result["recent_bodies"]),
-        bar_cells=bar_cells,
-        ma_rows=ma_rows,
-    )
+"""
+    html = (html
+            .replace("__FID__", futures_id)
+            .replace("__GEN__", gen_time)
+            .replace("__PERIODS__", periods_json)
+            .replace("__DATA__", data_json))
     return html
 
 
@@ -477,7 +526,7 @@ def generate_html_report(result, futures_id):
 # ---------------------------------------------------------------------------
 
 def run(futures_id="MTX", periods=None, body_thresh_pct=40, streak_thresh=3,
-        lookback=6, history_days=200, output_path="index.html"):
+        lookback=6, history_days=200, hist_max=180, output_path="index.html"):
     if periods is None:
         periods = [5, 10, 20, 60]
     body_thresh = body_thresh_pct / 100.0
@@ -493,20 +542,24 @@ def run(futures_id="MTX", periods=None, body_thresh_pct=40, streak_thresh=3,
     bars = fetch_futures_daily(futures_id, start_date, end_date)
     print("      取得 %d 根日 K，最新 %s。" % (len(bars), bars[-1]["date"]))
 
-    print("[2/4] 計算指標與判斷 ...")
-    result = analyze(bars, periods, body_thresh, streak_thresh, lookback)
-    print("      判定：%s（發散度趨勢=%s, streak=%d）"
-          % (result["verdict_label"], result["spread_trend"], result["streak"]))
+    print("[2/4] 逐日回推判定，建立歷史 ...")
+    history = build_history(bars, periods, body_thresh, streak_thresh, lookback, max_days=hist_max)
+    if not history:
+        raise RuntimeError("資料不足，無法建立任何一天的判定。")
+    latest = history[-1]
+    print("      共 %d 天可查；最新 %s 判定：%s（發散度=%s, streak=%d）"
+          % (len(history), latest["last_date"], latest["verdict_label"],
+             latest["spread_trend"], latest["streak"]))
 
     print("[3/4] 產生 HTML 報告 ...")
-    html = generate_html_report(result, futures_id)
+    html = generate_html_report(history, futures_id, periods)
 
     print("[4/4] 寫入 %s ..." % output_path)
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(html)
 
-    print("完成！判定結果：%s。" % result["verdict_label"])
-    return result
+    print("完成！最新判定：%s。" % latest["verdict_label"])
+    return history
 
 
 if __name__ == "__main__":
@@ -518,6 +571,7 @@ if __name__ == "__main__":
             streak_thresh=3,
             lookback=6,
             history_days=200,
+            hist_max=180,
         )
     except Exception as e:
         print("執行失敗：%s" % e, file=sys.stderr)
