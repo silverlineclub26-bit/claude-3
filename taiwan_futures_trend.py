@@ -228,10 +228,28 @@ def analyze(bars, periods, body_thresh, streak_thresh, lookback):
         else:
             break
 
+    # 方向：以最短均線相對最長均線的位置判定多頭／空頭排列
+    fast_p, slow_p = periods[0], periods[-1]
+    fast_ma, slow_ma = ma_series[fast_p][-1], ma_series[slow_p][-1]
+    if fast_ma is not None and slow_ma is not None and fast_ma != slow_ma:
+        if fast_ma > slow_ma:
+            direction, direction_label = "long", "多方"
+        else:
+            direction, direction_label = "short", "空方"
+    else:
+        direction, direction_label = "flat", "中性"
+
     if spread_trend == "expanding" and streak < 2:
         verdict = "trend"
         verdict_label = "趨勢盤"
-        verdict_desc = "均線間距正在擴大，且沒有連續小實體 K 棒，適合波段順勢邏輯操作。"
+        if direction == "long":
+            verdict_desc = ("均線間距擴大且呈多頭排列（MA%d 在 MA%d 之上），"
+                            "無連續小實體 K 棒，順勢偏多操作。" % (fast_p, slow_p))
+        elif direction == "short":
+            verdict_desc = ("均線間距擴大且呈空頭排列（MA%d 在 MA%d 之下），"
+                            "無連續小實體 K 棒，順勢偏空操作。" % (fast_p, slow_p))
+        else:
+            verdict_desc = "均線間距正在擴大，且沒有連續小實體 K 棒，適合波段順勢邏輯操作。"
     elif spread_trend == "contracting" and streak >= streak_thresh:
         verdict = "range"
         verdict_label = "盤整盤"
@@ -261,6 +279,8 @@ def analyze(bars, periods, body_thresh, streak_thresh, lookback):
         "verdict": verdict,
         "verdict_label": verdict_label,
         "verdict_desc": verdict_desc,
+        "direction": direction,
+        "direction_label": direction_label,
         "last_date": last["date"],
         "last_close": round(last["close"], 2),
         "spread_now": round(latest_spread, 3),
@@ -356,6 +376,10 @@ def generate_html_report(assets, periods):
   .verdict-tag { font-family:"IBM Plex Mono",monospace; font-size:12px; letter-spacing:.14em;
     color:var(--muted); text-transform:uppercase; }
   .verdict-title { font-size:34px; font-weight:700; color:var(--accent); margin:8px 0 12px; letter-spacing:.03em; }
+  .dir { display:none; margin-left:12px; font-size:15px; font-weight:600; padding:3px 12px;
+    border-radius:20px; vertical-align:middle; letter-spacing:.02em; }
+  .dir.long { color:var(--up); border:1px solid var(--up); }
+  .dir.short { color:var(--down); border:1px solid var(--down); }
   .verdict-desc { font-size:14.5px; color:var(--text); }
 
   .stats { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:22px; }
@@ -407,7 +431,7 @@ def generate_html_report(assets, periods):
   <div class="meta" id="meta"></div>
   <div class="verdict">
     <div class="verdict-tag">判定結果</div>
-    <div class="verdict-title" id="verdictTitle">—</div>
+    <div class="verdict-title"><span id="verdictLabel">—</span><span class="dir" id="dirBadge"></span></div>
     <div class="verdict-desc" id="verdictDesc"></div>
   </div>
 
@@ -498,8 +522,17 @@ function render(idx) {
     (isLatest ? '<span class="latest-badge">● 最新</span>'
               : '<span class="hist-badge">○ 歷史回推</span>');
 
-  document.getElementById("verdictTitle").textContent = r.verdict_label;
+  document.getElementById("verdictLabel").textContent = r.verdict_label;
   document.getElementById("verdictDesc").textContent = r.verdict_desc;
+
+  const dir = document.getElementById("dirBadge");
+  if (r.verdict === "trend" && (r.direction === "long" || r.direction === "short")) {
+    dir.textContent = r.direction === "long" ? "多方 ↑" : "空方 ↓";
+    dir.className = "dir " + r.direction;
+    dir.style.display = "inline-block";
+  } else {
+    dir.style.display = "none";
+  }
 
   document.getElementById("stats").innerHTML =
     card("均線發散度", r.spread_now + "%", ST[r.spread_trend] || "—") +
