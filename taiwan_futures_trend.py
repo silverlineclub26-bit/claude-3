@@ -339,6 +339,14 @@ def analyze(bars, periods, body_thresh, streak_thresh, lookback):
         verdict_label = "轉折觀察"
         verdict_desc = "訊號不一致，建議先縮小部位試單。"
 
+    # 三合一強訊號箭頭：方向趨勢 + 均線發散 + 短線同向，三者一致才給箭頭
+    if verdict == "trend" and trend_dir == "long" and conv == "diverge" and momentum == "up":
+        signal = "up"
+    elif verdict == "trend" and trend_dir == "short" and conv == "diverge" and momentum == "down":
+        signal = "down"
+    else:
+        signal = "none"
+
     recent_n = min(16, len(bars))
     recent_bodies = [
         {"date": bars[i]["date"], "ratio": round(body_ratios[i], 3)}
@@ -355,6 +363,8 @@ def analyze(bars, periods, body_thresh, streak_thresh, lookback):
         "conv_label": conv_label,
         "momentum": momentum,
         "momentum_label": momentum_label,
+        "trend_dir": trend_dir,
+        "signal": signal,
         "last_date": last["date"],
         "last_close": round(last["close"], 2),
         "spread_now": round(latest_spread, 3),
@@ -450,7 +460,11 @@ def generate_html_report(assets, periods):
     border-left:4px solid var(--accent); border-radius:12px; padding:22px 20px; margin-bottom:20px; }
   .verdict-tag { font-family:"IBM Plex Mono",monospace; font-size:12px; letter-spacing:.14em;
     color:var(--muted); text-transform:uppercase; }
-  .verdict-title { font-size:34px; font-weight:700; color:var(--accent); margin:8px 0 12px; letter-spacing:.03em; }
+  .verdict-head { display:flex; align-items:center; justify-content:space-between; gap:12px; margin:8px 0 12px; }
+  .verdict-title { font-size:34px; font-weight:700; color:var(--accent); letter-spacing:.03em; }
+  .signal-arrow { font-size:46px; font-weight:800; line-height:1; }
+  .sig-up { color:#E5484D; }
+  .sig-down { color:#3DAE73; }
   .verdict-desc { font-size:14.5px; color:var(--text); }
   .dirs { display:flex; gap:10px; margin-top:16px; flex-wrap:wrap; }
   .chip { font-size:12px; color:var(--muted); background:#1B1F26; border:1px solid var(--line);
@@ -510,10 +524,13 @@ def generate_html_report(assets, periods):
   <div class="meta" id="meta"></div>
   <div class="verdict">
     <div class="verdict-tag">判定結果</div>
-    <div class="verdict-title"><span id="verdictLabel">—</span></div>
+    <div class="verdict-head">
+      <div class="verdict-title"><span id="verdictLabel">—</span></div>
+      <div class="signal-arrow" id="signalArrow"></div>
+    </div>
     <div class="verdict-desc" id="verdictDesc"></div>
     <div class="dirs">
-      <span class="chip">均線收斂<b class="dir-val" id="alignVal"></b></span>
+      <span class="chip">均線型態<b class="dir-val" id="alignVal"></b></span>
       <span class="chip">短線方向<b class="dir-val" id="momVal"></b></span>
     </div>
   </div>
@@ -605,7 +622,12 @@ function render(idx) {
   const r = hist[idx];
   const isLatest = idx === hist.length - 1;
   dateInput.value = r.last_date;
-  document.documentElement.style.setProperty("--accent", VC[r.verdict] || "#8B919B");
+  // 多方趨勢＝紅、空方趨勢＝綠；其餘用各判定既有色
+  let accent;
+  if (r.verdict === "trend" && r.trend_dir === "long") accent = "#E5484D";
+  else if (r.verdict === "trend" && r.trend_dir === "short") accent = "#3DAE73";
+  else accent = VC[r.verdict] || "#8B919B";
+  document.documentElement.style.setProperty("--accent", accent);
 
   document.getElementById("meta").innerHTML =
     '<span>收盤日 <b class="mono">' + r.last_date + '</b></span>' +
@@ -616,8 +638,24 @@ function render(idx) {
   document.getElementById("verdictLabel").textContent = r.verdict_label;
   document.getElementById("verdictDesc").textContent = r.verdict_desc;
 
-  setDir("alignVal", r.conv, r.conv_label);
+  // 均線型態：發散跟著趨勢方向上色（多紅空綠），收斂為橘色警訊
+  const alignEl = document.getElementById("alignVal");
+  alignEl.textContent = r.conv_label;
+  if (r.conv === "converge") {
+    alignEl.className = "dir-val dir-warn";
+  } else if (r.conv === "diverge") {
+    alignEl.className = "dir-val " + (r.trend_dir === "long" ? "dir-up"
+                        : r.trend_dir === "short" ? "dir-down" : "dir-flat");
+  } else {
+    alignEl.className = "dir-val dir-flat";
+  }
   setDir("momVal", r.momentum, r.momentum_label);
+
+  // 三合一強訊號箭頭
+  const arrow = document.getElementById("signalArrow");
+  if (r.signal === "up") { arrow.textContent = "↑"; arrow.className = "signal-arrow sig-up"; }
+  else if (r.signal === "down") { arrow.textContent = "↓"; arrow.className = "signal-arrow sig-down"; }
+  else { arrow.textContent = ""; arrow.className = "signal-arrow"; }
 
   document.getElementById("stats").innerHTML =
     card("均線發散度", r.spread_now + "%", ST[r.spread_trend] || "—") +
