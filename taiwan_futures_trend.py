@@ -354,6 +354,18 @@ def analyze(bars, periods, body_thresh, streak_thresh, lookback):
         signal_dir, n = "none", 0
     signal_n = 2 if n >= 3 else (1 if n == 2 else 0)
 
+    # 操作建議：趨勢還在→續抱（順勢抱單）；趨勢不在→短做（縮部位、快進快出）
+    if verdict == "trend" and trend_dir in ("long", "short"):
+        side = "多單" if trend_dir == "long" else "空單"
+        action = "hold_long" if trend_dir == "long" else "hold_short"
+        if conv == "converge":
+            action_label = "趨勢還在但轉弱 · 續抱%s、可分批減碼" % side
+        else:
+            action_label = "趨勢還在 · 續抱%s" % side
+    else:
+        action = "scalp"
+        action_label = "趨勢不在 · 短做（快進快出、縮小部位）"
+
     recent_n = min(16, len(bars))
     recent_bodies = [
         {"date": bars[i]["date"], "ratio": round(body_ratios[i], 3)}
@@ -373,6 +385,8 @@ def analyze(bars, periods, body_thresh, streak_thresh, lookback):
         "trend_dir": trend_dir,
         "signal_dir": signal_dir,
         "signal_n": signal_n,
+        "action": action,
+        "action_label": action_label,
         "last_date": last["date"],
         "last_close": round(last["close"], 2),
         "spread_now": round(latest_spread, 3),
@@ -474,6 +488,10 @@ def generate_html_report(assets, periods):
   .sig-up { color:#E5484D; }
   .sig-down { color:#3DAE73; }
   .verdict-desc { font-size:14.5px; color:var(--text); }
+  .action { margin-top:14px; padding:12px 14px; border-radius:8px; font-weight:700; font-size:15.5px; }
+  .act-hold-long { background:rgba(229,72,77,.12); color:#E5484D; border:1px solid rgba(229,72,77,.45); }
+  .act-hold-short { background:rgba(61,174,115,.12); color:#3DAE73; border:1px solid rgba(61,174,115,.45); }
+  .act-scalp { background:rgba(217,138,61,.12); color:#D98A3D; border:1px solid rgba(217,138,61,.45); }
   .dirs { display:flex; gap:10px; margin-top:16px; flex-wrap:wrap; }
   .chip { font-size:12px; color:var(--muted); background:#1B1F26; border:1px solid var(--line);
     border-radius:20px; padding:6px 12px; }
@@ -537,6 +555,7 @@ def generate_html_report(assets, periods):
       <div class="signal-arrow" id="signalArrow"></div>
     </div>
     <div class="verdict-desc" id="verdictDesc"></div>
+    <div class="action" id="actionBox"></div>
     <div class="dirs">
       <span class="chip">均線型態<b class="dir-val" id="alignVal"></b></span>
       <span class="chip">短線方向<b class="dir-val" id="momVal"></b></span>
@@ -645,6 +664,11 @@ function render(idx) {
 
   document.getElementById("verdictLabel").textContent = r.verdict_label;
   document.getElementById("verdictDesc").textContent = r.verdict_desc;
+
+  const act = document.getElementById("actionBox");
+  act.textContent = r.action_label;
+  act.className = "action " + (r.action === "hold_long" ? "act-hold-long"
+                  : r.action === "hold_short" ? "act-hold-short" : "act-scalp");
 
   // 均線型態：發散跟著趨勢方向上色（多紅空綠），收斂為橘色警訊
   const alignEl = document.getElementById("alignVal");
