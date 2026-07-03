@@ -1,15 +1,15 @@
 # -*- coding: utf-8 -*-
 """
-台指期趨勢／盤整 自動判斷系統
+多商品 趨勢／盤整 自動判斷系統（台指期 + 比特幣）
 
-抓 FinMind 免費日 K 資料 → 計算均線 / 發散度 / K 棒實體比例 / 連續小實體根數
-→ 判斷「趨勢盤 / 盤整盤 / 轉折觀察」→ 產出 index.html。
+抓每日開高低收 → 計算均線 / 發散度 / K 棒實體比例 / 連續小實體根數
+→ 判斷「趨勢盤 / 盤整盤 / 轉折觀察」→ 產出單一 index.html。
 
-支援查歷史：對每一個交易日，用「當日（含）之前」的資料回推判定，內嵌進網頁，
-可用日期下拉選單查看任一天（例如 4/1）當時會給的建議。
+- 台指期：FinMind TaiwanFuturesDaily（免費）
+- 比特幣：Kraken 公開 OHLC API（免費、美國伺服器也可用）
 
-由 GitHub Actions 每個交易日自動執行，index.html 推回 repo 後由 GitHub Pages 發布，
-手機瀏覽器加書籤即可查看，不需自己跑程式。
+同一頁用頁籤切換不同商品；每個商品可用日期選擇器查歷史（逐日回推判定）。
+由 GitHub Actions 每日自動執行，index.html 推回 repo 後由 GitHub Pages 發布。
 """
 
 import os
@@ -25,10 +25,16 @@ import requests
 
 FINMIND_TOKEN = os.environ.get("FINMIND_TOKEN", "").strip()
 FINMIND_URL = "https://api.finmindtrade.com/api/v4/data"
+KRAKEN_URL = "https://api.kraken.com/0/public/OHLC"
 
-# 各判定門檻的預設值（會由 run() / analyze() 帶入）
 DELTA_EXPAND = 0.02      # 發散度趨勢：delta > 0.02 視為擴大中
 DELTA_CONTRACT = -0.02   # 發散度趨勢：delta < -0.02 視為收斂中
+
+# 要判斷的商品清單（頁籤順序即此順序）
+ASSETS = [
+    {"key": "MTX", "name": "台指期（小台）", "kind": "futures", "id": "MTX"},
+    {"key": "BTC", "name": "比特幣 BTC/USD", "kind": "crypto", "pair": "XBTUSD"},
+]
 
 
 # ---------------------------------------------------------------------------
@@ -37,15 +43,8 @@ DELTA_CONTRACT = -0.02   # 發散度趨勢：delta < -0.02 視為收斂中
 
 def fetch_futures_daily(futures_id, start_date, end_date):
     """
-    呼叫 FinMind TaiwanFuturesDaily，回傳一份「一天一筆」的日 K 資料。
-
-    FinMind 同一天會回傳多個合約（近月 / 次月）與多個交易時段（一般盤 / 盤後），
-    這裡：
-      1. 優先只留一般交易時段 (trading_session == 'position')
-      2. 同一天取「成交量最大」的那筆 → 近月主力合約
-      3. 依日期去重、由舊到新排序
-
-    回傳 list[dict]，每筆含 date, open, max, min, close（皆為 float，date 為字串）。
+    呼叫 FinMind TaiwanFuturesDaily，回傳「一天一筆」日 K（由舊到新）。
+    同一天取一般盤、成交量最大的合約（近月主力）。
     """
     params = {
         "dataset": "TaiwanFuturesDaily",
@@ -66,24 +65,20 @@ def fetch_futures_daily(futures_id, start_date, end_date):
         raise RuntimeError("FinMind API 回傳 HTTP %s：%s" % (resp.status_code, resp.text[:300]))
 
     payload = resp.json()
-
     if payload.get("status") != 200 and payload.get("msg", "").lower() not in ("success", ""):
         raise RuntimeError("FinMind API 回傳非成功狀態：%s" % str(payload)[:300])
 
     rows = payload.get("data", []) or []
     if not rows:
         raise RuntimeError(
-            "FinMind 沒有回傳任何資料（data_id=%s, %s ~ %s）。"
-            "請確認商品代碼與日期區間。" % (futures_id, start_date, end_date)
+            "FinMind 沒有回傳任何資料（data_id=%s, %s ~ %s）。" % (futures_id, start_date, end_date)
         )
 
-    # 1. 優先只留一般交易時段
     if any("trading_session" in r for r in rows):
         day_rows = [r for r in rows if str(r.get("trading_session", "")).lower() == "position"]
         if day_rows:
             rows = day_rows
 
-    # 2. 同一天取成交量最大的一筆
     def _vol(r):
         v = r.get("trading_volume", r.get("volume", 0))
         try:
@@ -99,7 +94,6 @@ def fetch_futures_daily(futures_id, start_date, end_date):
         if d not in best_by_date or _vol(r) > _vol(best_by_date[d]):
             best_by_date[d] = r
 
-    # 3. 整理成乾淨欄位、由舊到新排序
     bars = []
     for d in sorted(best_by_date):
         r = best_by_date[d]
@@ -112,16 +106,58 @@ def fetch_futures_daily(futures_id, start_date, end_date):
                 "close": float(r["close"]),
             }
         except (KeyError, TypeError, ValueError):
-            # 某些停牌日欄位可能為空，跳過
             continue
-        # 過濾掉開高低收都是 0 的異常列
         if bar["max"] <= 0 and bar["min"] <= 0 and bar["close"] <= 0:
             continue
         bars.append(bar)
 
     if not bars:
         raise RuntimeError("FinMind 資料整理後為空，無有效日 K。")
+    return bars
 
+
+def fetch_crypto_daily(pair="XBTUSD", interval=1440):
+    """
+    呼叫 Kraken 公開 OHLC API，回傳「一天一筆」日 K（由舊到新）。
+    interval=1440 分鐘 = 日線。回傳欄位 [time, open, high, low, close, vwap, volume, count]。
+    """
+    params = {"pair": pair, "interval": interval}
+    try:
+        resp = requests.get(KRAKEN_URL, params=params, timeout=30)
+    except requests.RequestException as e:
+        raise RuntimeError("呼叫 Kraken API 失敗：%s" % e) from e
+
+    if resp.status_code != 200:
+        raise RuntimeError("Kraken API 回傳 HTTP %s：%s" % (resp.status_code, resp.text[:300]))
+
+    payload = resp.json()
+    if payload.get("error"):
+        raise RuntimeError("Kraken API 回傳錯誤：%s" % payload["error"])
+
+    result = payload.get("result", {})
+    keys = [k for k in result if k != "last"]
+    if not keys:
+        raise RuntimeError("Kraken 回傳沒有 OHLC 資料。")
+    rows = result[keys[0]]
+
+    bars = []
+    for row in rows:
+        try:
+            ts = int(row[0])
+            d = datetime.datetime.fromtimestamp(ts, datetime.timezone.utc).strftime("%Y-%m-%d")
+            bar = {
+                "date": d,
+                "open": float(row[1]),
+                "max": float(row[2]),
+                "min": float(row[3]),
+                "close": float(row[4]),
+            }
+        except (IndexError, TypeError, ValueError):
+            continue
+        bars.append(bar)
+
+    if not bars:
+        raise RuntimeError("Kraken 資料整理後為空，無有效日 K。")
     return bars
 
 
@@ -130,9 +166,7 @@ def fetch_futures_daily(futures_id, start_date, end_date):
 # ---------------------------------------------------------------------------
 
 def sma(values, period):
-    """
-    簡單移動平均。回傳與輸入等長的陣列；前面不足週期的位置填 None。
-    """
+    """簡單移動平均；前面不足週期的位置填 None。"""
     out = [None] * len(values)
     if period <= 0:
         return out
@@ -146,71 +180,47 @@ def sma(values, period):
     return out
 
 
-# ---------------------------------------------------------------------------
-# 核心分析
-# ---------------------------------------------------------------------------
-
 def analyze(bars, periods, body_thresh, streak_thresh, lookback):
-    """
-    執行趨勢／盤整判斷（以 bars 的最後一根為「當日」）。
-
-    參數
-      bars          : fetch_futures_daily() 的輸出（由舊到新）
-      periods       : 均線週期清單，例 [5, 10, 20, 60]
-      body_thresh   : 實體比例警戒值（0~1），例 0.40
-      streak_thresh : 連續小實體根數門檻，例 3
-      lookback      : 發散度與前幾根相比，例 6
-
-    回傳 dict，含判定結果與前端所需資料。
-    """
+    """以 bars 的最後一根為「當日」執行趨勢／盤整判斷，回傳結果 dict。"""
     periods = sorted(periods)
     max_period = max(periods)
 
-    # 資料量檢查：至少要 最長均線週期 + 回看根數 + 2
     required = max_period + lookback + 2
     if len(bars) < required:
         raise RuntimeError(
-            "資料不足：需要至少 %d 根日 K（最長均線 %d + 回看 %d + 2），目前只有 %d 根。"
-            % (required, max_period, lookback, len(bars))
+            "資料不足：需要至少 %d 根日 K，目前只有 %d 根。" % (required, len(bars))
         )
 
     closes = [b["close"] for b in bars]
-
-    # 1. 各週期均線（用收盤價）
     ma_series = {p: sma(closes, p) for p in periods}
 
-    # 2. 每根 K 棒的均線發散度 spread（%）
-    #    = (最大均線值 - 最小均線值) / 均線平均值 * 100
     spreads = [None] * len(bars)
     for i in range(len(bars)):
         vals = [ma_series[p][i] for p in periods if ma_series[p][i] is not None]
-        if len(vals) == len(periods):  # 需所有均線都有值
+        if len(vals) == len(periods):
             avg = sum(vals) / len(vals)
             if avg != 0:
                 spreads[i] = (max(vals) - min(vals)) / avg * 100.0
 
-    # 3. 發散度趨勢：最新一根 spread 對比 lookback 根前的 spread
     latest_spread = spreads[-1]
     prev_spread = spreads[-1 - lookback]
     if latest_spread is None or prev_spread is None:
-        raise RuntimeError("發散度資料不足，無法比較趨勢（可能是均線暖機期）。")
+        raise RuntimeError("發散度資料不足，無法比較趨勢。")
     delta = latest_spread - prev_spread
 
     if delta > DELTA_EXPAND:
-        spread_trend = "expanding"      # 擴大中
+        spread_trend = "expanding"
     elif delta < DELTA_CONTRACT:
-        spread_trend = "contracting"    # 收斂中
+        spread_trend = "contracting"
     else:
-        spread_trend = "flat"           # 持平
+        spread_trend = "flat"
 
-    # 4. 每根 K 棒實體比例 = |close - open| / (max - min)
     body_ratios = []
     for b in bars:
         rng = b["max"] - b["min"]
         ratio = 0.0 if rng <= 0 else abs(b["close"] - b["open"]) / rng
         body_ratios.append(ratio)
 
-    # 5. 連續小實體根數 streak：從最新一根往回數，連續幾根實體比例 < 警戒值
     streak = 0
     for ratio in reversed(body_ratios):
         if ratio < body_thresh:
@@ -218,7 +228,6 @@ def analyze(bars, periods, body_thresh, streak_thresh, lookback):
         else:
             break
 
-    # 6. 最終判定
     if spread_trend == "expanding" and streak < 2:
         verdict = "trend"
         verdict_label = "趨勢盤"
@@ -235,7 +244,6 @@ def analyze(bars, periods, body_thresh, streak_thresh, lookback):
         verdict_label = "轉折觀察"
         verdict_desc = "訊號不一致，建議先縮小部位試單。"
 
-    # 前端要用的近期實體比例（最近 16 根）
     recent_n = min(16, len(bars))
     recent_bodies = [
         {
@@ -247,9 +255,7 @@ def analyze(bars, periods, body_thresh, streak_thresh, lookback):
         for i in range(len(bars) - recent_n, len(bars))
     ]
 
-    # 目前各均線數值
     ma_now = {p: ma_series[p][-1] for p in periods}
-
     last = bars[-1]
     return {
         "verdict": verdict,
@@ -271,10 +277,7 @@ def analyze(bars, periods, body_thresh, streak_thresh, lookback):
 
 
 def build_history(bars, periods, body_thresh, streak_thresh, lookback, max_days=180):
-    """
-    對每一個「可計算」的交易日，用當日（含）之前的資料回推判定，
-    回傳由舊到新的每日判定 list（最多保留最近 max_days 天）。
-    """
+    """逐日回推：對每個可計算交易日，用當日（含）之前資料算判定。回傳由舊到新 list。"""
     periods = sorted(periods)
     required = max(periods) + lookback + 2
     records = []
@@ -289,13 +292,13 @@ def build_history(bars, periods, body_thresh, streak_thresh, lookback, max_days=
 
 
 # ---------------------------------------------------------------------------
-# 產生 HTML 報告（內嵌歷史 + JS 日期選單）
+# 產生 HTML 報告（多商品頁籤 + JS 日期選擇器）
 # ---------------------------------------------------------------------------
 
-def generate_html_report(history, futures_id, periods):
-    """把每日判定 list 內嵌進深色交易終端機風格頁面，支援日期下拉查歷史。"""
+def generate_html_report(assets, periods):
+    """assets: list[{key, name, history:[...]}]。產生含頁籤與日期選擇器的單一頁面。"""
     gen_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
-    data_json = json.dumps(history, ensure_ascii=False)
+    data_json = json.dumps(assets, ensure_ascii=False)
     periods_json = json.dumps(sorted(periods))
 
     html = """<!doctype html>
@@ -303,24 +306,20 @@ def generate_html_report(history, futures_id, periods):
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>台指期 趨勢／盤整 判斷 · __FID__</title>
+<title>趨勢／盤整 自動判斷</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
 <style>
   :root {
     --bg:#0B0D10; --panel:#14171C; --line:#262B33;
-    --text:#EDEAE3; --muted:#8B919B;
-    --accent:#8B919B;
+    --text:#EDEAE3; --muted:#8B919B; --accent:#8B919B;
     --up:#3DAE73; --down:#E5484D;
   }
   * { box-sizing:border-box; margin:0; padding:0; }
-  body {
-    background:var(--bg); color:var(--text);
+  body { background:var(--bg); color:var(--text);
     font-family:"Noto Sans TC",-apple-system,sans-serif;
-    -webkit-font-smoothing:antialiased; line-height:1.5;
-    padding:24px 16px 40px;
-  }
+    -webkit-font-smoothing:antialiased; line-height:1.5; padding:24px 16px 40px; }
   .wrap { max-width:520px; margin:0 auto; }
   .mono { font-family:"IBM Plex Mono",monospace; }
 
@@ -328,12 +327,18 @@ def generate_html_report(history, futures_id, periods):
     color:var(--muted); text-transform:uppercase; }
   h1 { font-size:22px; font-weight:700; margin:6px 0 16px; letter-spacing:.02em; }
 
+  .tabs { display:flex; gap:8px; margin-bottom:16px; }
+  .tab { flex:1; text-align:center; padding:11px 8px; border:1px solid var(--line);
+    border-radius:9px; background:var(--panel); color:var(--muted); font-size:14px;
+    font-weight:500; cursor:pointer; user-select:none; transition:color .12s,border-color .12s; }
+  .tab.active { color:var(--text); border-color:var(--accent);
+    box-shadow:inset 0 0 0 1px var(--accent); }
+
   .picker { display:flex; align-items:center; gap:10px; margin-bottom:16px; }
   .picker label { font-size:12px; color:var(--muted); white-space:nowrap; }
-  .picker input[type=date] {
-    flex:1; min-width:0; background:var(--panel); color:var(--text); border:1px solid var(--line);
-    border-radius:8px; padding:10px 12px; font-family:"IBM Plex Mono",monospace; font-size:14px;
-  }
+  .picker input[type=date] { flex:1; min-width:0; background:var(--panel); color:var(--text);
+    border:1px solid var(--line); border-radius:8px; padding:10px 12px;
+    font-family:"IBM Plex Mono",monospace; font-size:14px; }
   .picker input[type=date]::-webkit-calendar-picker-indicator { filter:invert(.65); cursor:pointer; }
   .nav { display:flex; gap:8px; }
   .nav button { background:var(--panel); color:var(--text); border:1px solid var(--line);
@@ -385,8 +390,10 @@ def generate_html_report(history, futures_id, periods):
 </head>
 <body>
 <div class="wrap">
-  <div class="eyebrow">__FID__ · 日K自動判斷</div>
+  <div class="eyebrow" id="eyebrow">日K自動判斷</div>
   <h1>趨勢／盤整判斷</h1>
+
+  <div class="tabs" id="tabs"></div>
 
   <div class="picker">
     <label>查看日期</label>
@@ -420,47 +427,68 @@ def generate_html_report(history, futures_id, periods):
   <div class="ma-table" id="maTable"></div>
 
   <footer>
-    資料來源 FinMind TaiwanFuturesDaily · 每交易日 16:30 後更新<br>
+    資料來源 FinMind（台指）／ Kraken（比特幣）· 台指每交易日 16:30 後更新<br>
     本頁產生時間 __GEN__ · 歷史判定為依當日（含）之前資料回推計算<br>
     僅供研究參考，非投資建議
   </footer>
 </div>
 
 <script>
-const FUTURES_ID = "__FID__";
+const ASSETS = __DATA__;
 const PERIODS = __PERIODS__;
-const HISTORY = __DATA__;
 const VC = { trend:"#D4A73C", range:"#8B7EC8", watch:"#D98A3D" };
 const ST = { expanding:"擴大中 ↑", contracting:"收斂中 ↓", flat:"持平 →" };
+
+let curAsset = 0, curIdx = 0, DATES = [];
+
+const tabsEl = document.getElementById("tabs");
+const eyebrowEl = document.getElementById("eyebrow");
+const dateInput = document.getElementById("dateInput");
+const prevBtn = document.getElementById("prevBtn");
+const nextBtn = document.getElementById("nextBtn");
 
 function fmt(v, d) {
   if (v === null || v === undefined) return "—";
   return Number(v).toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
 }
 function pct(v) { return (v * 100).toFixed(0) + "%"; }
-
-const dateInput = document.getElementById("dateInput");
-const prevBtn = document.getElementById("prevBtn");
-const nextBtn = document.getElementById("nextBtn");
-
-const DATES = HISTORY.map(function (r) { return r.last_date; });
-let curIdx = HISTORY.length - 1;
-dateInput.min = DATES[0];
-dateInput.max = DATES[DATES.length - 1];
-
-// 找 last_date <= 選定日期 的最後一筆交易日；若選的比最早還早，取第一筆
+function card(k, v, sub) {
+  return '<div class="stat"><div class="stat-k">' + k + '</div>' +
+         '<div class="stat-v">' + v + '</div><div class="stat-sub">' + sub + '</div></div>';
+}
 function nearestIdx(dateStr) {
   let found = -1;
-  for (let i = 0; i < DATES.length; i++) {
-    if (DATES[i] <= dateStr) found = i; else break;
-  }
+  for (let i = 0; i < DATES.length; i++) { if (DATES[i] <= dateStr) found = i; else break; }
   return found >= 0 ? found : 0;
+}
+
+// 建立頁籤
+ASSETS.forEach(function (a, i) {
+  const t = document.createElement("div");
+  t.className = "tab";
+  t.textContent = a.name;
+  t.addEventListener("click", function () { switchAsset(i); });
+  tabsEl.appendChild(t);
+});
+
+function switchAsset(i) {
+  curAsset = i;
+  const hist = ASSETS[i].history;
+  DATES = hist.map(function (r) { return r.last_date; });
+  dateInput.min = DATES[0];
+  dateInput.max = DATES[DATES.length - 1];
+  eyebrowEl.textContent = ASSETS[i].name + " · 日K自動判斷";
+  for (let j = 0; j < tabsEl.children.length; j++) {
+    tabsEl.children[j].classList.toggle("active", j === i);
+  }
+  render(hist.length - 1);
 }
 
 function render(idx) {
   curIdx = idx;
-  const r = HISTORY[idx];
-  const isLatest = idx === HISTORY.length - 1;
+  const hist = ASSETS[curAsset].history;
+  const r = hist[idx];
+  const isLatest = idx === hist.length - 1;
   dateInput.value = r.last_date;
   document.documentElement.style.setProperty("--accent", VC[r.verdict] || "#8B919B");
 
@@ -497,28 +525,24 @@ function render(idx) {
   document.getElementById("maTable").innerHTML = ma;
 
   prevBtn.disabled = idx === 0;
-  nextBtn.disabled = idx === HISTORY.length - 1;
+  nextBtn.disabled = isLatest;
 }
 
 dateInput.addEventListener("change", function () {
   if (dateInput.value) render(nearestIdx(dateInput.value));
 });
 prevBtn.addEventListener("click", function () { if (curIdx > 0) render(curIdx - 1); });
-nextBtn.addEventListener("click", function () { if (curIdx < HISTORY.length - 1) render(curIdx + 1); });
+nextBtn.addEventListener("click", function () {
+  if (curIdx < ASSETS[curAsset].history.length - 1) render(curIdx + 1);
+});
 
-function card(k, v, sub) {
-  return '<div class="stat"><div class="stat-k">' + k + '</div>' +
-         '<div class="stat-v">' + v + '</div><div class="stat-sub">' + sub + '</div></div>';
-}
-
-// 預設顯示最新一天
-render(HISTORY.length - 1);
+// 預設顯示第一個商品的最新一天
+switchAsset(0);
 </script>
 </body>
 </html>
 """
     html = (html
-            .replace("__FID__", futures_id)
             .replace("__GEN__", gen_time)
             .replace("__PERIODS__", periods_json)
             .replace("__DATA__", data_json))
@@ -526,50 +550,64 @@ render(HISTORY.length - 1);
 
 
 # ---------------------------------------------------------------------------
-# 串接：抓資料 → 分析 → 產出 HTML → 寫檔
+# 串接：抓所有商品 → 各自建歷史 → 產出單一 HTML → 寫檔
 # ---------------------------------------------------------------------------
 
-def run(futures_id="MTX", periods=None, body_thresh_pct=40, streak_thresh=3,
-        lookback=6, history_days=200, hist_max=180, output_path="index.html"):
+def build_asset(cfg, periods, body_thresh, streak_thresh, lookback, history_days, hist_max):
+    if cfg["kind"] == "futures":
+        end = datetime.date.today()
+        start = end - datetime.timedelta(days=history_days * 2)
+        bars = fetch_futures_daily(cfg["id"], start.isoformat(), end.isoformat())
+    elif cfg["kind"] == "crypto":
+        bars = fetch_crypto_daily(cfg["pair"])
+    else:
+        raise RuntimeError("未知商品類型：%s" % cfg["kind"])
+
+    history = build_history(bars, periods, body_thresh, streak_thresh, lookback, max_days=hist_max)
+    if not history:
+        raise RuntimeError("資料不足，無法建立任何一天的判定。")
+    return {"key": cfg["key"], "name": cfg["name"], "history": history}
+
+
+def run_all(assets_cfg=None, periods=None, body_thresh_pct=40, streak_thresh=3,
+            lookback=6, history_days=200, hist_max=180, output_path="index.html"):
+    if assets_cfg is None:
+        assets_cfg = ASSETS
     if periods is None:
         periods = [5, 10, 20, 60]
     body_thresh = body_thresh_pct / 100.0
 
-    end = datetime.date.today()
-    start = end - datetime.timedelta(days=history_days * 2)  # 抓寬一點以扣除假日
-    start_date = start.isoformat()
-    end_date = end.isoformat()
-
-    print("[1/4] 抓取 FinMind 資料 %s (%s ~ %s) ..." % (futures_id, start_date, end_date))
     if not FINMIND_TOKEN:
-        print("      （未設定 FINMIND_TOKEN，以匿名額度執行，仍可運作）")
-    bars = fetch_futures_daily(futures_id, start_date, end_date)
-    print("      取得 %d 根日 K，最新 %s。" % (len(bars), bars[-1]["date"]))
+        print("（未設定 FINMIND_TOKEN，台指以匿名額度抓取，仍可運作）")
 
-    print("[2/4] 逐日回推判定，建立歷史 ...")
-    history = build_history(bars, periods, body_thresh, streak_thresh, lookback, max_days=hist_max)
-    if not history:
-        raise RuntimeError("資料不足，無法建立任何一天的判定。")
-    latest = history[-1]
-    print("      共 %d 天可查；最新 %s 判定：%s（發散度=%s, streak=%d）"
-          % (len(history), latest["last_date"], latest["verdict_label"],
-             latest["spread_trend"], latest["streak"]))
+    results = []
+    for cfg in assets_cfg:
+        print("抓取並分析 %s（%s）..." % (cfg["name"], cfg["key"]))
+        try:
+            res = build_asset(cfg, periods, body_thresh, streak_thresh, lookback, history_days, hist_max)
+        except Exception as e:  # 單一商品失敗不影響其他商品
+            print("  ! %s 失敗，略過：%s" % (cfg["key"], e), file=sys.stderr)
+            continue
+        latest = res["history"][-1]
+        print("  %s：%d 天可查，最新 %s → %s"
+              % (cfg["key"], len(res["history"]), latest["last_date"], latest["verdict_label"]))
+        results.append(res)
 
-    print("[3/4] 產生 HTML 報告 ...")
-    html = generate_html_report(history, futures_id, periods)
+    if not results:
+        raise RuntimeError("所有商品都抓取失敗，無法產生報告。")
 
-    print("[4/4] 寫入 %s ..." % output_path)
+    print("產生 HTML 報告 ...")
+    html = generate_html_report(results, periods)
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(html)
-
-    print("完成！最新判定：%s。" % latest["verdict_label"])
-    return history
+    print("完成！已寫入 %s（%d 個商品）。" % (output_path, len(results)))
+    return results
 
 
 if __name__ == "__main__":
     try:
-        run(
-            futures_id="MTX",
+        run_all(
+            assets_cfg=ASSETS,
             periods=[5, 10, 20, 60],
             body_thresh_pct=40,
             streak_thresh=3,
