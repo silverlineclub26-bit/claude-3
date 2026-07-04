@@ -944,7 +944,9 @@ function render(idx) {
     (isLatest ? '<span class="latest-badge">● 最新</span>'
               : '<span class="hist-badge">○ 歷史回推</span>');
 
-  document.getElementById("verdictLabel").textContent = r.state_label;
+  const vlEl = document.getElementById("verdictLabel");
+  vlEl.textContent = r.state_label;
+  vlEl.style.color = (r.state === "none") ? "#8B919B" : "";   // 無明確趨勢標題維持灰白
   document.getElementById("verdictDesc").textContent = r.state_desc;
 
   const act = document.getElementById("actionBox");
