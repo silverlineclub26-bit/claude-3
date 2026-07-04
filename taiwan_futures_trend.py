@@ -447,6 +447,7 @@ def build_history(bars, periods, body_thresh, streak_thresh, lookback, max_days=
     p5 = str(periods[0])
     p10 = str(periods[1]) if len(periods) > 1 else str(periods[0])
     side = "none"
+    strong_up = dipped_up = strong_dn = dipped_dn = False  # 加碼追蹤：本波是否確認過兩箭頭、之後是否回檔
     for rec in records:
         close = rec["last_close"]
         ma5 = rec["ma_now"].get(p5)
@@ -496,6 +497,28 @@ def build_history(bars, periods, body_thresh, streak_thresh, lookback, max_days=
         else:
             rec["signal_dir"], nn = "none", 0
         rec["signal_n"] = 2 if nn >= 3 else (1 if nn == 2 else 0)
+
+        # 趨勢加碼點：兩箭頭確認後短線回檔(轉空/持平)，趨勢仍在時短線再度轉多/空 → 加碼
+        add_signal = "none"
+        if side == "long":
+            if rec["signal_dir"] == "up" and rec["signal_n"] >= 2:
+                strong_up = True
+            if strong_up and rec["momentum"] != "up":
+                dipped_up = True
+            if strong_up and dipped_up and state == "up_hold" and rec["momentum"] == "up":
+                add_signal, dipped_up = "add_long", False
+        elif side == "short":
+            if rec["signal_dir"] == "down" and rec["signal_n"] >= 2:
+                strong_dn = True
+            if strong_dn and rec["momentum"] != "down":
+                dipped_dn = True
+            if strong_dn and dipped_dn and state == "down_hold" and rec["momentum"] == "down":
+                add_signal, dipped_dn = "add_short", False
+        else:  # 離開趨勢 → 本波作廢
+            strong_up = dipped_up = strong_dn = dipped_dn = False
+        rec["add_signal"] = add_signal
+        rec["add_label"] = ("趨勢加碼點 · 順勢加碼多單" if add_signal == "add_long"
+                            else "趨勢加碼點 · 順勢加碼空單" if add_signal == "add_short" else "")
 
     if max_days and len(records) > max_days:
         records = records[-max_days:]
@@ -577,6 +600,10 @@ def generate_html_report(assets, periods):
   .act-hold-long { background:rgba(229,72,77,.12); color:#E5484D; border:1px solid rgba(229,72,77,.45); }
   .act-hold-short { background:rgba(61,174,115,.12); color:#3DAE73; border:1px solid rgba(61,174,115,.45); }
   .act-scalp { background:rgba(217,138,61,.12); color:#D98A3D; border:1px solid rgba(217,138,61,.45); }
+  .addon { display:none; margin-top:10px; padding:11px 14px; border-radius:8px; font-weight:700;
+    font-size:15px; border:1px dashed; }
+  .add-long { color:#E5484D; border-color:#E5484D; background:rgba(229,72,77,.10); }
+  .add-short { color:#3DAE73; border-color:#3DAE73; background:rgba(61,174,115,.10); }
   .dirs { display:flex; gap:10px; margin-top:16px; flex-wrap:wrap; }
   .chip { font-size:12px; color:var(--muted); background:#1B1F26; border:1px solid var(--line);
     border-radius:20px; padding:6px 12px; }
@@ -643,6 +670,7 @@ def generate_html_report(assets, periods):
     </div>
     <div class="verdict-desc" id="verdictDesc"></div>
     <div class="action" id="actionBox"></div>
+    <div class="addon" id="addonBox"></div>
     <div class="dirs">
       <span class="chip">均線型態<b class="dir-val" id="alignVal"></b></span>
       <span class="chip">短線方向<b class="dir-val" id="momVal"></b></span>
@@ -750,6 +778,15 @@ function render(idx) {
   const act = document.getElementById("actionBox");
   act.textContent = r.action_label;
   act.className = "action " + (r.action_class || "act-scalp");
+
+  const addon = document.getElementById("addonBox");
+  if (r.add_signal === "add_long" || r.add_signal === "add_short") {
+    addon.textContent = "🎯 " + r.add_label;
+    addon.className = "addon " + (r.add_signal === "add_long" ? "add-long" : "add-short");
+    addon.style.display = "block";
+  } else {
+    addon.style.display = "none";
+  }
 
   // 均線型態：發散跟著趨勢方向上色（多紅空綠），收斂為橘色警訊
   const alignEl = document.getElementById("alignVal");
