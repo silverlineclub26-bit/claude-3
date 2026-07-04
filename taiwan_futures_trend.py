@@ -599,6 +599,8 @@ def build_history(bars, periods, body_thresh, streak_thresh, lookback, max_days=
         else:
             rec["signal_dir"], nn = "none", 0
         rec["signal_n"] = max(0, nn - 1)   # 2項→1箭頭、3項→2箭頭、4項→3箭頭
+        if rec["conv"] == "chop":          # 震盪盤易假突破 → 不給強訊號箭頭
+            rec["signal_dir"], rec["signal_n"] = "none", 0
 
         # 無明確趨勢但已浮現箭頭且連續 2 天同方向 → 建議可試單（單日翻面不算，避免洗盤反覆）
         if state == "none" and rec["signal_n"] >= 1 and rec["signal_dir"] == prev_sig_dir:
