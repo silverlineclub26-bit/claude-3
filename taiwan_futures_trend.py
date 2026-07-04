@@ -517,9 +517,9 @@ _STATE_META = {
                    "趨勢持續 · 持有或續抱多單", "#E5484D", "act-hold-long"),
     "down_hold":  ("空方趨勢", "收盤仍在5日線下，持有或續抱空單。",
                    "趨勢持續 · 持有或續抱空單", "#3DAE73", "act-hold-short"),
-    "up_range":   ("趨勢整理", "跌破5日線但守住10日線，多方趨勢暫歇。",
+    "up_range":   ("多方趨勢整理", "跌破5日線但守住10日線，多方趨勢暫歇。",
                    "多方暫歇", "#E5484D", "act-hold-long"),
-    "down_range": ("趨勢整理", "站上5日線但未過10日線，空方趨勢暫歇。",
+    "down_range": ("空方趨勢整理", "站上5日線但未過10日線，空方趨勢暫歇。",
                    "空方暫歇", "#3DAE73", "act-hold-short"),
     "turn_down":  ("趨勢受阻", "跌破10日線，多方趨勢受阻。",
                    "多單減碼或出場", "#3DAE73", "act-hold-short"),
@@ -627,11 +627,8 @@ def build_history(bars, periods, body_thresh, streak_thresh, lookback, max_days=
                 else:
                     rec["accent"] = "#E5484D" if pending_dir == "up" else "#3DAE73"
                     rec["action_class"] = "act-hold-long" if pending_dir == "up" else "act-hold-short"
-                    if fresh:
-                        rec["action_label"] = ("訊號浮現 · 可嘗試建立多單" if pending_dir == "up"
-                                               else "訊號浮現 · 可嘗試建立空單")
-                    else:                   # 沿用中（非新鮮）不顯示箭頭
-                        rec["action_label"] = "趨勢可能成形"
+                    rec["action_label"] = "多方趨勢成形" if pending_dir == "up" else "空方趨勢成形"
+                    if not fresh:           # 沿用中（非新鮮）不顯示箭頭
                         rec["arrow_dir"], rec["arrow_n"] = "none", 0
         else:
             pending_dir = "none"            # 進入趨勢/轉折 → 重置 pending
