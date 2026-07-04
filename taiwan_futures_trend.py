@@ -506,10 +506,10 @@ def analyze(bars, periods, body_thresh, streak_thresh, lookback):
 
 # 持續性趨勢狀態表：state → (標題, 說明, 操作建議, 主色, 橫幅樣式)
 _STATE_META = {
-    "up_hold":    ("多方趨勢", "收盤仍站在5日線上，順勢續抱多單。",
-                   "趨勢還在 · 續抱多單", "#E5484D", "act-hold-long"),
-    "down_hold":  ("空方趨勢", "收盤仍在5日線下，順勢續抱空單。",
-                   "趨勢還在 · 續抱空單", "#3DAE73", "act-hold-short"),
+    "up_hold":    ("多方趨勢", "收盤仍站在5日線上，持有或續抱多單。",
+                   "趨勢還在 · 持有或續抱多單", "#E5484D", "act-hold-long"),
+    "down_hold":  ("空方趨勢", "收盤仍在5日線下，持有或續抱空單。",
+                   "趨勢還在 · 持有或續抱空單", "#3DAE73", "act-hold-short"),
     "up_range":   ("趨勢整理", "跌破5日線但守住10日線，多方趨勢暫歇回檔。",
                    "多方暫歇 · 改短做、縮小部位", "#E5484D", "act-hold-long"),
     "down_range": ("趨勢整理", "站上5日線但未過10日線，空方趨勢暫歇回檔。",
