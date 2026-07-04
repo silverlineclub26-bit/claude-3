@@ -632,7 +632,8 @@ def build_history(bars, periods, body_thresh, streak_thresh, lookback, max_days=
                         rec["action_label"] = ("訊號浮現 · 可嘗試建立多單" if pending_dir == "up"
                                                else "訊號浮現 · 可嘗試建立空單")
                     else:                   # 沿用中（非新鮮）不顯示箭頭
-                        rec["action_label"] = "趨勢成形中"
+                        rec["action_label"] = ("趨勢成形中 · 可嘗試持有多單" if pending_dir == "up"
+                                               else "趨勢成形中 · 可嘗試持有空單")
                         rec["arrow_dir"], rec["arrow_n"] = "none", 0
         else:
             pending_dir = "none"            # 進入趨勢/轉折 → 重置 pending
