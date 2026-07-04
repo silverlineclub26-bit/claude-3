@@ -647,7 +647,7 @@ def generate_html_report(groups, periods):
   body { background:var(--bg); color:var(--text);
     font-family:"Noto Sans TC",-apple-system,sans-serif;
     -webkit-font-smoothing:antialiased; line-height:1.5; padding:24px 16px 40px; }
-  .wrap { max-width:680px; margin:0 auto; }
+  .wrap { width:100%; max-width:960px; margin:0 auto; }
   .mono { font-family:"IBM Plex Mono",monospace; }
 
   .eyebrow { font-family:"IBM Plex Mono",monospace; font-size:12px; letter-spacing:.18em;
@@ -716,7 +716,7 @@ def generate_html_report(groups, periods):
   .tri-break-up { color:#0B0D10; background:#E5484D; padding:1px 6px; border-radius:6px; font-weight:700; }   /* 糾結突破↑ 醒目紅 */
   .tri-break-dn { color:#0B0D10; background:#3DAE73; padding:1px 6px; border-radius:6px; font-weight:700; }   /* 糾結跌破↓ 醒目綠 */
 
-  .stats { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:22px; }
+  .stats { display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:10px; margin-bottom:22px; }
   .stat { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:14px; }
   .stat-k { font-size:12px; color:var(--muted); margin-bottom:6px; }
   .stat-v { font-family:"IBM Plex Mono",monospace; font-size:22px; font-weight:600; }
@@ -726,9 +726,9 @@ def generate_html_report(groups, periods):
 
   .body-chart { background:var(--panel); border:1px solid var(--line); border-radius:10px;
     padding:16px 12px 10px; margin-bottom:22px; }
-  .body-bars { display:flex; align-items:flex-end; gap:5px; height:120px; }
-  .body-col { flex:1; display:flex; flex-direction:column; align-items:center; height:100%; }
-  .body-bar-track { flex:1; width:100%; display:flex; align-items:flex-end; }
+  .body-bars { display:flex; align-items:flex-end; gap:5px; }
+  .body-col { flex:1 1 0; min-width:0; display:flex; flex-direction:column; align-items:center; }
+  .body-bar-track { height:120px; width:100%; display:flex; align-items:flex-end; }
   .body-bar-fill { width:100%; border-radius:3px 3px 0 0; }
   .body-date { font-family:"IBM Plex Mono",monospace; font-size:9px; color:var(--muted);
     margin-top:6px; transform:rotate(-45deg); transform-origin:center; white-space:nowrap; }
