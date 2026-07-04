@@ -362,6 +362,12 @@ def analyze(bars, periods, body_thresh, streak_thresh, lookback):
         else:
             conv, conv_label = "diverge", "發散"
 
+    # 型態／發散方向：以 MA5 相對 MA10（兩條短均）在上或下決定（空頭發散→綠）
+    if sa[-1] is not None and sb[-1] is not None and sa[-1] != sb[-1]:
+        conv_dir = "up" if sa[-1] > sb[-1] else "down"
+    else:
+        conv_dir = "flat"
+
     # 徽章2「短線方向」：跌破5日且為實體黑K → 偏空；站上5日 → 偏多；其餘 → 中性
     last_open = bars[-1]["open"]
     last_close = closes[-1]
@@ -480,6 +486,7 @@ def analyze(bars, periods, body_thresh, streak_thresh, lookback):
         "verdict_desc": verdict_desc,
         "conv": conv,
         "conv_label": conv_label,
+        "conv_dir": conv_dir,
         "momentum": momentum,
         "momentum_label": momentum_label,
         "triband": triband,
@@ -577,11 +584,11 @@ def build_history(bars, periods, body_thresh, streak_thresh, lookback, max_days=
 
         # 箭頭：續抱狀態 + 均線發散 + 短線同向，累計 2 項給 1 箭頭、3 項給 2 箭頭
         up_c = ((1 if state == "up_hold" else 0)
-                + (1 if rec["conv"] == "diverge" else 0)
+                + (1 if rec["conv"] == "diverge" and rec["conv_dir"] == "up" else 0)
                 + (1 if rec["momentum"] == "up" else 0)
                 + (1 if rec["triband"] in ("above", "break_up") else 0))
         dn_c = ((1 if state == "down_hold" else 0)
-                + (1 if rec["conv"] == "diverge" else 0)
+                + (1 if rec["conv"] == "diverge" and rec["conv_dir"] == "down" else 0)
                 + (1 if rec["momentum"] == "down" else 0)
                 + (1 if rec["triband"] in ("below", "break_dn") else 0))
         if up_c > dn_c and up_c >= 2:
@@ -872,7 +879,7 @@ function nearestIdx(dateStr) {
 function chipColor(kind, r) {
   if (kind === "type") {
     if (r.conv === "chop") return "#F5A623";
-    if (r.conv === "diverge") return r.trend_dir === "long" ? "#E5484D" : r.trend_dir === "short" ? "#3DAE73" : "";
+    if (r.conv === "diverge") return r.conv_dir === "up" ? "#E5484D" : r.conv_dir === "down" ? "#3DAE73" : "";
     return "";
   }
   if (kind === "mom") {
@@ -970,8 +977,8 @@ function render(idx) {
   } else if (r.conv === "range") {
     alignEl.className = "dir-val dir-soft";            // 盤整：柔和
   } else if (r.conv === "diverge") {
-    alignEl.className = "dir-val " + (r.trend_dir === "long" ? "dir-up"
-                        : r.trend_dir === "short" ? "dir-down" : "dir-flat");
+    alignEl.className = "dir-val " + (r.conv_dir === "up" ? "dir-up"
+                        : r.conv_dir === "down" ? "dir-down" : "dir-flat");
   } else {
     alignEl.className = "dir-val dir-flat";
   }
