@@ -627,8 +627,12 @@ def build_history(bars, periods, body_thresh, streak_thresh, lookback, max_days=
                 else:
                     rec["accent"] = "#E5484D" if pending_dir == "up" else "#3DAE73"
                     rec["action_class"] = "act-hold-long" if pending_dir == "up" else "act-hold-short"
-                    rec["action_label"] = "多方趨勢成形" if pending_dir == "up" else "空方趨勢成形"
-                    if not fresh:           # 沿用中（非新鮮）不顯示箭頭
+                    rec["state_label"] = "多方趨勢成形" if pending_dir == "up" else "空方趨勢成形"
+                    if fresh:
+                        rec["action_label"] = ("訊號浮現 · 可嘗試建立多單" if pending_dir == "up"
+                                               else "訊號浮現 · 可嘗試建立空單")
+                    else:                   # 沿用中（非新鮮）不顯示箭頭
+                        rec["action_label"] = "趨勢成形中"
                         rec["arrow_dir"], rec["arrow_n"] = "none", 0
         else:
             pending_dir = "none"            # 進入趨勢/轉折 → 重置 pending
@@ -977,7 +981,7 @@ function render(idx) {
 
   const vlEl = document.getElementById("verdictLabel");
   vlEl.textContent = r.state_label;
-  vlEl.style.color = (r.state === "none") ? "#8B919B" : "";   // 無明確趨勢標題維持灰白
+  vlEl.style.color = (r.state === "none" && r.accent === "#8B919B") ? "#8B919B" : "";   // 純無趨勢標題灰白；有方向時跟主色
   document.getElementById("verdictDesc").textContent = r.state_desc;
 
   const act = document.getElementById("actionBox");
