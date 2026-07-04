@@ -539,6 +539,7 @@ def build_history(bars, periods, body_thresh, streak_thresh, lookback, max_days=
     p10 = str(periods[1]) if len(periods) > 1 else str(periods[0])
     side = "none"
     strong_up = dipped_up = strong_dn = dipped_dn = False  # 加碼追蹤：本波是否確認過兩箭頭、之後是否回檔
+    prev_tri = None  # 前一根三線狀態（用於偵測糾結突破的當天）
     for rec in records:
         close = rec["last_close"]
         ma5 = rec["ma_now"].get(p5)
@@ -611,6 +612,19 @@ def build_history(bars, periods, body_thresh, streak_thresh, lookback, max_days=
                 add_signal, dipped_dn = "add_short", False
         else:  # 離開趨勢 → 本波作廢
             strong_up = dipped_up = strong_dn = dipped_dn = False
+
+        # 站回三線加碼：趨勢中，收盤當天重新站回/跌破三條短均（含糾結突破，且非震盪）
+        up_tri = rec["triband"] in ("above", "break_up")
+        dn_tri = rec["triband"] in ("below", "break_dn")
+        prev_up_tri = prev_tri in ("above", "break_up")
+        prev_dn_tri = prev_tri in ("below", "break_dn")
+        if add_signal == "none" and rec["conv"] != "chop":
+            if side == "long" and state == "up_hold" and up_tri and not prev_up_tri:
+                add_signal = "add_long"
+            elif side == "short" and state == "down_hold" and dn_tri and not prev_dn_tri:
+                add_signal = "add_short"
+        prev_tri = rec["triband"]
+
         rec["add_signal"] = add_signal
         rec["add_label"] = ("趨勢加碼點 · 順勢加碼多單" if add_signal == "add_long"
                             else "趨勢加碼點 · 順勢加碼空單" if add_signal == "add_short" else "")
