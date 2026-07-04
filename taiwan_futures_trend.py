@@ -284,13 +284,24 @@ def analyze(bars, periods, body_thresh, streak_thresh, lookback):
     # 徽章1「均線收斂」：5 日與 10 日（兩條最短）均線的距離，近 3 根是收斂還是發散
     p_a, p_b = periods[0], (periods[1] if len(periods) > 1 else periods[0])
     sa, sb = ma_series[p_a], ma_series[p_b]
+
+    # 波動：近5根平均振幅 vs 近20根平均振幅（自適應各商品），放大代表大K交替洗盤
+    ranges = [b["max"] - b["min"] for b in bars]
+    vol_recent = sum(ranges[-5:]) / min(5, len(ranges))
+    vol_base = sum(ranges[-20:]) / min(20, len(ranges))
+    choppy = vol_base > 0 and vol_recent > 1.2 * vol_base
+
     conv, conv_label = "flat", "—"
     if (len(sa) > 3 and sa[-1] is not None and sb[-1] is not None
             and sa[-4] is not None and sb[-4] is not None):
         dist_now = abs(sa[-1] - sb[-1])
         dist_ref = abs(sa[-4] - sb[-4])
         if dist_now < dist_ref:
-            conv, conv_label = "converge", "收斂"
+            # 收斂細分：高波動洗盤 → 震盪；低波動 → 盤整
+            if choppy:
+                conv, conv_label = "chop", "震盪"
+            else:
+                conv, conv_label = "range", "盤整"
         else:
             conv, conv_label = "diverge", "發散"
 
@@ -574,6 +585,8 @@ def generate_html_report(assets, periods):
   .dir-down { color:var(--up); }   /* 空／偏空＝綠（跌綠） */
   .dir-warn { color:#D98A3D; }
   .dir-flat { color:var(--muted); }
+  .dir-soft { color:var(--muted); }                     /* 盤整：柔和 */
+  .dir-chop { color:#0B0D10; background:#F5A623; padding:2px 9px; border-radius:6px; font-weight:700; }  /* 震盪：醒目 */
 
   .stats { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:22px; }
   .stat { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:14px; }
@@ -741,8 +754,10 @@ function render(idx) {
   // 均線型態：發散跟著趨勢方向上色（多紅空綠），收斂為橘色警訊
   const alignEl = document.getElementById("alignVal");
   alignEl.textContent = r.conv_label;
-  if (r.conv === "converge") {
-    alignEl.className = "dir-val dir-warn";
+  if (r.conv === "chop") {
+    alignEl.className = "dir-val dir-chop";            // 震盪：醒目
+  } else if (r.conv === "range") {
+    alignEl.className = "dir-val dir-soft";            // 盤整：柔和
   } else if (r.conv === "diverge") {
     alignEl.className = "dir-val " + (r.trend_dir === "long" ? "dir-up"
                         : r.trend_dir === "short" ? "dir-down" : "dir-flat");
