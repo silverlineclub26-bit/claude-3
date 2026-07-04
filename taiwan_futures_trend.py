@@ -598,14 +598,16 @@ def build_history(bars, periods, body_thresh, streak_thresh, lookback, max_days=
                 strong_up = True
             if strong_up and rec["momentum"] != "up":
                 dipped_up = True
-            if strong_up and dipped_up and state == "up_hold" and rec["momentum"] == "up":
+            if (strong_up and dipped_up and state == "up_hold"
+                    and rec["momentum"] == "up" and rec["conv"] != "chop"):
                 add_signal, dipped_up = "add_long", False
         elif side == "short":
             if rec["signal_dir"] == "down" and rec["signal_n"] >= 2:
                 strong_dn = True
             if strong_dn and rec["momentum"] != "down":
                 dipped_dn = True
-            if strong_dn and dipped_dn and state == "down_hold" and rec["momentum"] == "down":
+            if (strong_dn and dipped_dn and state == "down_hold"
+                    and rec["momentum"] == "down" and rec["conv"] != "chop"):
                 add_signal, dipped_dn = "add_short", False
         else:  # 離開趨勢 → 本波作廢
             strong_up = dipped_up = strong_dn = dipped_dn = False
