@@ -1000,11 +1000,12 @@ function render(idx) {
   document.getElementById("chipTri").style.borderColor = chipColor("tri", r);
   document.getElementById("chipMom").style.borderColor = chipColor("mom", r);
 
-  // 強訊號箭頭：2 項→1 箭頭、3 項→2 箭頭
+  // 強訊號箭頭：2 項→1 箭頭、3 項→2 箭頭；無趨勢又未持續同向時不顯示（避免洗盤反覆）
   const arrow = document.getElementById("signalArrow");
-  if (r.signal_dir === "up" && r.signal_n > 0) {
+  const suppressArrow = (r.state === "none" && r.action_class === "act-scalp");
+  if (!suppressArrow && r.signal_dir === "up" && r.signal_n > 0) {
     arrow.textContent = "↑".repeat(r.signal_n); arrow.className = "signal-arrow sig-up";
-  } else if (r.signal_dir === "down" && r.signal_n > 0) {
+  } else if (!suppressArrow && r.signal_dir === "down" && r.signal_n > 0) {
     arrow.textContent = "↓".repeat(r.signal_n); arrow.className = "signal-arrow sig-down";
   } else {
     arrow.textContent = ""; arrow.className = "signal-arrow";
