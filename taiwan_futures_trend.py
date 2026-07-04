@@ -750,9 +750,9 @@ def generate_html_report(groups, periods):
     border-left:4px solid var(--accent); border-radius:12px; padding:22px 20px; margin-bottom:20px; }
   .verdict-tag { font-family:"IBM Plex Mono",monospace; font-size:12px; letter-spacing:.14em;
     color:var(--muted); text-transform:uppercase; }
-  .verdict-head { display:flex; align-items:center; justify-content:space-between; gap:12px; margin:8px 0 12px; }
-  .verdict-title { font-size:34px; font-weight:700; color:var(--accent); letter-spacing:.03em; }
-  .signal-arrow { font-size:46px; font-weight:800; line-height:1; }
+  .verdict-tagrow { display:flex; align-items:center; gap:12px; }
+  .verdict-title { font-size:34px; font-weight:700; color:var(--accent); letter-spacing:.03em; margin:6px 0 12px; }
+  .signal-arrow { font-size:26px; font-weight:800; line-height:1; }
   .sig-up { color:#E5484D; }
   .sig-down { color:#3DAE73; }
   .verdict-desc { font-size:14.5px; color:var(--text); }
@@ -828,11 +828,11 @@ def generate_html_report(groups, periods):
 
   <div class="meta" id="meta"></div>
   <div class="verdict">
-    <div class="verdict-tag">判定結果</div>
-    <div class="verdict-head">
-      <div class="verdict-title"><span id="verdictLabel">—</span></div>
-      <div class="signal-arrow" id="signalArrow"></div>
+    <div class="verdict-tagrow">
+      <span class="verdict-tag">判定結果</span>
+      <span class="signal-arrow" id="signalArrow"></span>
     </div>
+    <div class="verdict-title"><span id="verdictLabel">—</span></div>
     <div class="verdict-desc" id="verdictDesc"></div>
     <div class="action" id="actionBox"></div>
     <div class="addon" id="addonBox"></div>
