@@ -318,6 +318,38 @@ def analyze(bars, periods, body_thresh, streak_thresh, lookback):
     else:
         momentum, momentum_label = "flat", "中性"
 
+    # 三線訊號：收盤相對三條短期均線（取最短三條）位置 + 均線糾結後突破
+    triband, triband_label = "mix", "中性"
+    if len(periods) >= 3:
+        q1, q2, q3 = periods[0], periods[1], periods[2]
+        s1, s2, s3 = ma_series[q1], ma_series[q2], ma_series[q3]
+        if s1[-1] is not None and s2[-1] is not None and s3[-1] is not None:
+            m1, m2, m3 = s1[-1], s2[-1], s3[-1]
+            sp3 = []
+            for i in range(len(bars)):
+                v1, v2, v3 = s1[i], s2[i], s3[i]
+                if None in (v1, v2, v3) or bars[i]["close"] == 0:
+                    continue
+                sp3.append((max(v1, v2, v3) - min(v1, v2, v3)) / bars[i]["close"] * 100)
+            base = sum(sp3[-20:]) / len(sp3[-20:]) if sp3 else None
+            recent_tight = base is not None and base > 0 and any(v < 0.6 * base for v in sp3[-5:])
+            cur_tight = base is not None and base > 0 and sp3 and sp3[-1] < 0.6 * base
+            cl = closes[-1]
+            above = cl > m1 and cl > m2 and cl > m3
+            below = cl < m1 and cl < m2 and cl < m3
+            if above and recent_tight:
+                triband, triband_label = "break_up", "糾結突破↑"
+            elif below and recent_tight:
+                triband, triband_label = "break_dn", "糾結跌破↓"
+            elif above:
+                triband, triband_label = "above", "站上三線"
+            elif below:
+                triband, triband_label = "below", "跌破三線"
+            elif cur_tight:
+                triband, triband_label = "coil", "均線糾結"
+            else:
+                triband, triband_label = "mix", "中性"
+
     # 趨勢盤的方向：MA5 相對 MA60 的排列（之上多方、之下空方）
     slow_ma = ma_series[periods[-1]][-1]
     if fast_ma is not None and slow_ma is not None and fast_ma != slow_ma:
@@ -393,6 +425,8 @@ def analyze(bars, periods, body_thresh, streak_thresh, lookback):
         "conv_label": conv_label,
         "momentum": momentum,
         "momentum_label": momentum_label,
+        "triband": triband,
+        "triband_label": triband_label,
         "trend_dir": trend_dir,
         "signal_dir": signal_dir,
         "signal_n": signal_n,
@@ -614,6 +648,8 @@ def generate_html_report(assets, periods):
   .dir-flat { color:var(--muted); }
   .dir-soft { color:var(--muted); }                     /* 盤整：柔和 */
   .dir-chop { color:#0B0D10; background:#F5A623; padding:2px 9px; border-radius:6px; font-weight:700; }  /* 震盪：醒目 */
+  .tri-break-up { color:#0B0D10; background:#E5484D; padding:2px 9px; border-radius:6px; font-weight:700; }   /* 糾結突破↑ 醒目紅 */
+  .tri-break-dn { color:#0B0D10; background:#3DAE73; padding:2px 9px; border-radius:6px; font-weight:700; }   /* 糾結跌破↓ 醒目綠 */
 
   .stats { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:22px; }
   .stat { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:14px; }
@@ -674,6 +710,7 @@ def generate_html_report(assets, periods):
     <div class="dirs">
       <span class="chip">均線型態<b class="dir-val" id="alignVal"></b></span>
       <span class="chip">短線方向<b class="dir-val" id="momVal"></b></span>
+      <span class="chip">三線<b class="dir-val" id="triVal"></b></span>
     </div>
   </div>
 
@@ -802,6 +839,16 @@ function render(idx) {
     alignEl.className = "dir-val dir-flat";
   }
   setDir("momVal", r.momentum, r.momentum_label);
+
+  // 三線：站上/跌破三線(多紅空綠)、糾結(橘)、糾結突破(醒目底色)
+  const triEl = document.getElementById("triVal");
+  triEl.textContent = r.triband_label;
+  const tclass = r.triband === "break_up" ? "tri-break-up"
+               : r.triband === "break_dn" ? "tri-break-dn"
+               : r.triband === "above" ? "dir-up"
+               : r.triband === "below" ? "dir-down"
+               : r.triband === "coil" ? "dir-warn" : "dir-flat";
+  triEl.className = "dir-val " + tclass;
 
   // 強訊號箭頭：2 項→1 箭頭、3 項→2 箭頭
   const arrow = document.getElementById("signalArrow");
