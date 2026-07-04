@@ -526,7 +526,7 @@ _STATE_META = {
     "turn_up":    ("短期轉多", "站上10日線，空方趨勢告一段落。",
                    "空單回補", "#E5484D", "act-hold-long"),
     "none":       ("無明確趨勢", "尚未形成明確趨勢，區間短做或觀望。",
-                   "觀望／短做", "#8B919B", "act-scalp"),
+                   "趨勢可能成形", "#8B919B", "act-scalp"),
 }
 
 
@@ -602,16 +602,28 @@ def build_history(bars, periods, body_thresh, streak_thresh, lookback, max_days=
         if rec["conv"] == "chop":          # 震盪盤易假突破 → 不給強訊號箭頭
             rec["signal_dir"], rec["signal_n"] = "none", 0
 
-        # 無明確趨勢但已浮現箭頭且連續 2 天同方向 → 建議可試單（單日翻面不算，避免洗盤反覆）
-        if state == "none" and rec["signal_n"] >= 1 and rec["signal_dir"] == prev_sig_dir:
-            if rec["signal_dir"] == "up":
-                rec["action_label"] = "訊號浮現 · 可嘗試建立多單"
-                rec["action_class"] = "act-hold-long"
+        # 顯示用箭頭：預設跟隨訊號（趨勢狀態沿用；無趨勢時只在新鮮試單日顯示）
+        rec["arrow_dir"] = rec["signal_dir"]
+        rec["arrow_n"] = rec["signal_n"]
+
+        # 無明確趨勢：方向訊號浮現後 carry-forward，沒反轉就維持紅/綠框
+        if state == "none":
+            fresh = (rec["signal_n"] >= 1 and rec["signal_dir"] == prev_sig_dir
+                     and rec["signal_dir"] in ("up", "down"))
+            if fresh:                       # 新鮮試單（或反向的持續訊號 → 反轉方向）
+                pending_dir = rec["signal_dir"]
+            if pending_dir == "up":
                 rec["accent"] = "#E5484D"
-            elif rec["signal_dir"] == "down":
-                rec["action_label"] = "訊號浮現 · 可嘗試建立空單"
-                rec["action_class"] = "act-hold-short"
+                rec["action_class"] = "act-hold-long"
+                rec["action_label"] = "訊號浮現 · 可嘗試建立多單" if fresh else "趨勢可能成形"
+            elif pending_dir == "down":
                 rec["accent"] = "#3DAE73"
+                rec["action_class"] = "act-hold-short"
+                rec["action_label"] = "訊號浮現 · 可嘗試建立空單" if fresh else "趨勢可能成形"
+            if not fresh:                   # 沿用中（非新鮮）不顯示箭頭，避免反覆
+                rec["arrow_dir"], rec["arrow_n"] = "none", 0
+        else:
+            pending_dir = "none"            # 進入趨勢/轉折 → 重置 pending
 
         # 趨勢加碼點：兩箭頭確認後短線回檔(轉空/持平)，趨勢仍在時短線再度轉多/空 → 加碼
         add_signal = "none"
@@ -1004,11 +1016,10 @@ function render(idx) {
 
   // 強訊號箭頭：2 項→1 箭頭、3 項→2 箭頭；無趨勢又未持續同向時不顯示（避免洗盤反覆）
   const arrow = document.getElementById("signalArrow");
-  const suppressArrow = (r.state === "none" && r.action_class === "act-scalp");
-  if (!suppressArrow && r.signal_dir === "up" && r.signal_n > 0) {
-    arrow.textContent = "↑".repeat(r.signal_n); arrow.className = "signal-arrow sig-up";
-  } else if (!suppressArrow && r.signal_dir === "down" && r.signal_n > 0) {
-    arrow.textContent = "↓".repeat(r.signal_n); arrow.className = "signal-arrow sig-down";
+  if (r.arrow_dir === "up" && r.arrow_n > 0) {
+    arrow.textContent = "↑".repeat(r.arrow_n); arrow.className = "signal-arrow sig-up";
+  } else if (r.arrow_dir === "down" && r.arrow_n > 0) {
+    arrow.textContent = "↓".repeat(r.arrow_n); arrow.className = "signal-arrow sig-down";
   } else {
     arrow.textContent = ""; arrow.className = "signal-arrow";
   }
