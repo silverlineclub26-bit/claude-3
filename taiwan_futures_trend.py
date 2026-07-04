@@ -526,7 +526,7 @@ _STATE_META = {
     "turn_up":    ("趨勢受阻", "站上10日線，空方趨勢受阻（留意是否洗盤）。",
                    "空單回補", "#E5484D", "act-hold-long"),
     "none":       ("無明確趨勢", "尚未形成明確趨勢，區間短做或觀望。",
-                   "趨勢可能成形", "#8B919B", "act-scalp"),
+                   "短做／觀望", "#8B919B", "act-scalp"),
 }
 
 
@@ -609,8 +609,8 @@ def build_history(bars, periods, body_thresh, streak_thresh, lookback, max_days=
 
         # 無明確趨勢：方向訊號浮現後 carry-forward，沒反轉就維持紅/綠框
         if state == "none":
-            fresh = (rec["signal_n"] >= 1 and rec["signal_dir"] == prev_sig_dir
-                     and rec["signal_dir"] in ("up", "down"))
+            fresh = (rec["signal_n"] >= 1 and rec["signal_dir"] in ("up", "down")
+                     and (rec["signal_dir"] == prev_sig_dir or rec["signal_dir"] == pending_dir))
             if fresh:                       # 新鮮試單（或反向的持續訊號 → 反轉方向）
                 pending_dir = rec["signal_dir"]
             if pending_dir == "up":
