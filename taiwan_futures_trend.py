@@ -511,9 +511,9 @@ _STATE_META = {
     "down_hold":  ("空方趨勢", "收盤仍在5日線下，順勢續抱空單。",
                    "趨勢還在 · 續抱空單", "#3DAE73", "act-hold-short"),
     "up_range":   ("盤整", "跌破5日線但守住10日線，趨勢暫歇進入盤整。",
-                   "趨勢暫歇 · 改短做、縮小部位", "#D98A3D", "act-scalp"),
+                   "趨勢暫歇 · 改短做、縮小部位", "#8B919B", "act-scalp"),
     "down_range": ("盤整", "站上5日線但未過10日線，趨勢暫歇進入盤整。",
-                   "趨勢暫歇 · 改短做、縮小部位", "#D98A3D", "act-scalp"),
+                   "趨勢暫歇 · 改短做、縮小部位", "#8B919B", "act-scalp"),
     "turn_down":  ("短期轉空", "跌破10日線，多方趨勢告一段落、短期轉空。",
                    "多單出場 · 偏空短做", "#3DAE73", "act-hold-short"),
     "turn_up":    ("短期轉多", "站上10日線，空方趨勢告一段落、短期轉多。",
@@ -699,7 +699,7 @@ def generate_html_report(groups, periods):
   .action { margin-top:14px; padding:12px 14px; border-radius:8px; font-weight:700; font-size:15.5px; }
   .act-hold-long { background:rgba(229,72,77,.12); color:#E5484D; border:1px solid rgba(229,72,77,.45); }
   .act-hold-short { background:rgba(61,174,115,.12); color:#3DAE73; border:1px solid rgba(61,174,115,.45); }
-  .act-scalp { background:rgba(217,138,61,.12); color:#D98A3D; border:1px solid rgba(217,138,61,.45); }
+  .act-scalp { background:rgba(139,145,155,.12); color:#8B919B; border:1px solid rgba(139,145,155,.4); }
   .addon { display:none; margin-top:10px; padding:11px 14px; border-radius:8px; font-weight:700;
     font-size:15px; border:1px dashed; }
   .add-long { color:#E5484D; border-color:#E5484D; background:rgba(229,72,77,.10); }
