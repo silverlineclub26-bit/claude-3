@@ -520,17 +520,19 @@ def build_history(bars, periods, body_thresh, streak_thresh, lookback, max_days=
         # 箭頭：續抱狀態 + 均線發散 + 短線同向，累計 2 項給 1 箭頭、3 項給 2 箭頭
         up_c = ((1 if state == "up_hold" else 0)
                 + (1 if rec["conv"] == "diverge" else 0)
-                + (1 if rec["momentum"] == "up" else 0))
+                + (1 if rec["momentum"] == "up" else 0)
+                + (1 if rec["triband"] in ("above", "break_up") else 0))
         dn_c = ((1 if state == "down_hold" else 0)
                 + (1 if rec["conv"] == "diverge" else 0)
-                + (1 if rec["momentum"] == "down" else 0))
+                + (1 if rec["momentum"] == "down" else 0)
+                + (1 if rec["triband"] in ("below", "break_dn") else 0))
         if up_c > dn_c and up_c >= 2:
             rec["signal_dir"], nn = "up", up_c
         elif dn_c > up_c and dn_c >= 2:
             rec["signal_dir"], nn = "down", dn_c
         else:
             rec["signal_dir"], nn = "none", 0
-        rec["signal_n"] = 2 if nn >= 3 else (1 if nn == 2 else 0)
+        rec["signal_n"] = max(0, nn - 1)   # 2項→1箭頭、3項→2箭頭、4項→3箭頭
 
         # 趨勢加碼點：兩箭頭確認後短線回檔(轉空/持平)，趨勢仍在時短線再度轉多/空 → 加碼
         add_signal = "none"
@@ -588,7 +590,7 @@ def generate_html_report(assets, periods):
   body { background:var(--bg); color:var(--text);
     font-family:"Noto Sans TC",-apple-system,sans-serif;
     -webkit-font-smoothing:antialiased; line-height:1.5; padding:24px 16px 40px; }
-  .wrap { max-width:520px; margin:0 auto; }
+  .wrap { max-width:680px; margin:0 auto; }
   .mono { font-family:"IBM Plex Mono",monospace; }
 
   .eyebrow { font-family:"IBM Plex Mono",monospace; font-size:12px; letter-spacing:.18em;
