@@ -548,6 +548,7 @@ def build_history(bars, periods, body_thresh, streak_thresh, lookback, max_days=
     strong_up = dipped_up = strong_dn = dipped_dn = False  # 加碼追蹤：本波是否確認過兩箭頭、之後是否回檔
     prev_tri = None  # 前一根三線狀態（用於偵測糾結突破的當天）
     prev_sig_dir = "none"  # 前一根訊號方向（無趨勢試單需連續同向才建議，避免單日翻面）
+    pending_dir = "none"   # 無趨勢期間浮現的方向，carry-forward 到反轉或趨勢成形
     for rec in records:
         close = rec["last_close"]
         ma5 = rec["ma_now"].get(p5)
