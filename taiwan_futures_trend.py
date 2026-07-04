@@ -595,11 +595,11 @@ def build_history(bars, periods, body_thresh, streak_thresh, lookback, max_days=
         # 無明確趨勢但已浮現箭頭 → 別只保守，建議可試單（標題仍維持無趨勢）
         if state == "none" and rec["signal_n"] >= 1:
             if rec["signal_dir"] == "up":
-                rec["action_label"] = "多方訊號浮現"
+                rec["action_label"] = "可嘗試建立多單"
                 rec["action_class"] = "act-hold-long"
                 rec["accent"] = "#E5484D"
             elif rec["signal_dir"] == "down":
-                rec["action_label"] = "空方訊號浮現"
+                rec["action_label"] = "可嘗試建立空單"
                 rec["action_class"] = "act-hold-short"
                 rec["accent"] = "#3DAE73"
 
