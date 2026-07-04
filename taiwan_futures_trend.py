@@ -521,9 +521,9 @@ _STATE_META = {
                    "多方暫歇", "#E5484D", "act-hold-long"),
     "down_range": ("趨勢整理", "站上5日線但未過10日線，空方趨勢暫歇。",
                    "空方暫歇", "#3DAE73", "act-hold-short"),
-    "turn_down":  ("短期轉空", "跌破10日線，多方趨勢告一段落。",
+    "turn_down":  ("趨勢受阻", "跌破10日線，多方趨勢受阻（留意是否洗盤）。",
                    "多單出場", "#3DAE73", "act-hold-short"),
-    "turn_up":    ("短期轉多", "站上10日線，空方趨勢告一段落。",
+    "turn_up":    ("趨勢受阻", "站上10日線，空方趨勢受阻（留意是否洗盤）。",
                    "空單回補", "#E5484D", "act-hold-long"),
     "none":       ("無明確趨勢", "尚未形成明確趨勢，區間短做或觀望。",
                    "趨勢可能成形", "#8B919B", "act-scalp"),
@@ -1128,6 +1128,14 @@ def run_all(groups_cfg=None, periods=None, body_thresh_pct=40, streak_thresh=3,
 
     if not groups:
         raise RuntimeError("所有商品都抓取失敗，無法產生報告。")
+
+    # 保護：只有全部商品都成功才覆寫，避免某天 API 抽風導致頁面掉商品
+    expected = sum(len(g["members"]) for g in groups_cfg)
+    built = sum(len(g["members"]) for g in groups)
+    if built < expected:
+        raise RuntimeError(
+            "僅成功 %d/%d 檔，為避免頁面掉商品，本次不覆寫 index.html（保留前一版）。" % (built, expected)
+        )
 
     print("產生 HTML 報告 ...")
     html = generate_html_report(groups, periods)
