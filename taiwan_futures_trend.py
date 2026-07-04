@@ -34,11 +34,18 @@ DELTA_EXPAND = 0.02      # 發散度趨勢：delta > 0.02 視為擴大中
 DELTA_CONTRACT = -0.02   # 發散度趨勢：delta < -0.02 視為收斂中
 
 # 要判斷的商品清單（頁籤順序即此順序）
-ASSETS = [
-    {"key": "MTX", "name": "台指期", "kind": "futures", "id": "MTX"},
-    {"key": "BTC", "name": "比特幣", "kind": "crypto", "pair": "XBTUSD"},
-    {"key": "IXIC", "name": "那斯達克", "kind": "index", "symbol": "^IXIC"},
-    {"key": "SOX", "name": "費半", "kind": "index", "symbol": "^SOX"},
+# 頁籤群組：每個頁籤可含多個成員（成員>1 時前端出現下拉選單）
+ASSET_GROUPS = [
+    {"key": "MTX", "name": "台指期", "members": [
+        {"key": "MTX", "name": "台指期", "kind": "futures", "id": "MTX"}]},
+    {"key": "BTC", "name": "比特幣", "members": [
+        {"key": "BTC", "name": "比特幣", "kind": "crypto", "pair": "XBTUSD"}]},
+    {"key": "US", "name": "美股", "members": [
+        {"key": "IXIC", "name": "那斯達克", "kind": "index", "symbol": "^IXIC"},
+        {"key": "SOX", "name": "費半", "kind": "index", "symbol": "^SOX"}]},
+    {"key": "STK", "name": "股票", "members": [
+        {"key": "2330", "name": "台積電 2330", "kind": "stock", "id": "2330"},
+        {"key": "3481", "name": "群創 3481", "kind": "stock", "id": "3481"}]},
 ]
 
 
@@ -208,6 +215,53 @@ def fetch_index_daily(symbol, rng="2y"):
 
     if not bars:
         raise RuntimeError("Yahoo Finance 資料整理後為空，無有效日 K。")
+    return bars
+
+
+def fetch_stock_daily(stock_id, start_date, end_date):
+    """呼叫 FinMind TaiwanStockPrice，回傳台股個股日 K（由舊到新，一天一筆）。"""
+    params = {
+        "dataset": "TaiwanStockPrice",
+        "data_id": stock_id,
+        "start_date": start_date,
+        "end_date": end_date,
+    }
+    headers = {}
+    if FINMIND_TOKEN:
+        headers["Authorization"] = "Bearer " + FINMIND_TOKEN
+
+    try:
+        resp = requests.get(FINMIND_URL, params=params, headers=headers, timeout=30)
+    except requests.RequestException as e:
+        raise RuntimeError("呼叫 FinMind（股票）失敗：%s" % e) from e
+
+    if resp.status_code != 200:
+        raise RuntimeError("FinMind 股票 API 回傳 HTTP %s：%s" % (resp.status_code, resp.text[:200]))
+
+    payload = resp.json()
+    rows = payload.get("data", []) or []
+    if not rows:
+        raise RuntimeError("FinMind 沒有回傳股票資料（data_id=%s）。" % stock_id)
+
+    bars = []
+    for r in rows:
+        try:
+            bar = {
+                "date": r["date"],
+                "open": float(r["open"]),
+                "max": float(r["max"]),
+                "min": float(r["min"]),
+                "close": float(r["close"]),
+            }
+        except (KeyError, TypeError, ValueError):
+            continue
+        if bar["max"] <= 0 and bar["min"] <= 0 and bar["close"] <= 0:
+            continue  # 停牌日
+        bars.append(bar)
+
+    bars.sort(key=lambda b: b["date"])
+    if not bars:
+        raise RuntimeError("FinMind 股票資料整理後為空，無有效日 K。")
     return bars
 
 
@@ -565,10 +619,10 @@ def build_history(bars, periods, body_thresh, streak_thresh, lookback, max_days=
 # 產生 HTML 報告（多商品頁籤 + JS 日期選擇器）
 # ---------------------------------------------------------------------------
 
-def generate_html_report(assets, periods):
-    """assets: list[{key, name, history:[...]}]。產生含頁籤與日期選擇器的單一頁面。"""
+def generate_html_report(groups, periods):
+    """groups: list[{key, name, members:[{key,name,history}]}]。單頁：頁籤 + (多成員時)下拉 + 日期選擇器。"""
     gen_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
-    data_json = json.dumps(assets, ensure_ascii=False)
+    data_json = json.dumps(groups, ensure_ascii=False)
     periods_json = json.dumps(sorted(periods))
 
     html = """<!doctype html>
@@ -605,6 +659,11 @@ def generate_html_report(assets, periods):
   .tab.active { color:var(--text); border-color:var(--accent);
     box-shadow:inset 0 0 0 1px var(--accent); }
 
+  .member-sel { width:100%; margin-bottom:16px; background:var(--panel); color:var(--text);
+    border:1px solid var(--line); border-radius:8px; padding:11px 12px;
+    font-family:"Noto Sans TC",sans-serif; font-size:15px; -webkit-appearance:none; appearance:none;
+    background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'><path d='M2 4l4 4 4-4' stroke='%238B919B' stroke-width='1.5' fill='none'/></svg>");
+    background-repeat:no-repeat; background-position:right 12px center; }
   .picker { display:flex; align-items:center; gap:10px; margin-bottom:16px; }
   .picker label { font-size:12px; color:var(--muted); white-space:nowrap; }
   .picker input[type=date] { flex:1; min-width:0; background:var(--panel); color:var(--text);
@@ -640,18 +699,19 @@ def generate_html_report(assets, periods):
     font-size:15px; border:1px dashed; }
   .add-long { color:#E5484D; border-color:#E5484D; background:rgba(229,72,77,.10); }
   .add-short { color:#3DAE73; border-color:#3DAE73; background:rgba(61,174,115,.10); }
-  .dirs { display:flex; gap:10px; margin-top:16px; flex-wrap:wrap; }
-  .chip { font-size:12px; color:var(--muted); background:#1B1F26; border:1px solid var(--line);
-    border-radius:20px; padding:6px 12px; }
-  .chip b { font-weight:600; margin-left:5px; font-size:13px; }
+  .dirs { display:flex; gap:6px; margin-top:16px; flex-wrap:nowrap; overflow-x:auto; }
+  .chip { flex:1 1 0; min-width:0; text-align:center; white-space:nowrap; font-size:11.5px;
+    color:var(--muted); background:#1B1F26; border:1px solid var(--line);
+    border-radius:18px; padding:6px 6px; }
+  .chip b { font-weight:600; margin-left:4px; font-size:12px; }
   .dir-up { color:var(--down); }   /* 多／偏多＝紅（台股慣例 漲紅） */
   .dir-down { color:var(--up); }   /* 空／偏空＝綠（跌綠） */
   .dir-warn { color:#D98A3D; }
   .dir-flat { color:var(--muted); }
   .dir-soft { color:var(--muted); }                     /* 盤整：柔和 */
-  .dir-chop { color:#0B0D10; background:#F5A623; padding:2px 9px; border-radius:6px; font-weight:700; }  /* 震盪：醒目 */
-  .tri-break-up { color:#0B0D10; background:#E5484D; padding:2px 9px; border-radius:6px; font-weight:700; }   /* 糾結突破↑ 醒目紅 */
-  .tri-break-dn { color:#0B0D10; background:#3DAE73; padding:2px 9px; border-radius:6px; font-weight:700; }   /* 糾結跌破↓ 醒目綠 */
+  .dir-chop { color:#0B0D10; background:#F5A623; padding:1px 6px; border-radius:6px; font-weight:700; }  /* 震盪：醒目 */
+  .tri-break-up { color:#0B0D10; background:#E5484D; padding:1px 6px; border-radius:6px; font-weight:700; }   /* 糾結突破↑ 醒目紅 */
+  .tri-break-dn { color:#0B0D10; background:#3DAE73; padding:1px 6px; border-radius:6px; font-weight:700; }   /* 糾結跌破↓ 醒目綠 */
 
   .stats { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:22px; }
   .stat { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:14px; }
@@ -689,6 +749,8 @@ def generate_html_report(assets, periods):
   <h1>趨勢／盤整判斷</h1>
 
   <div class="tabs" id="tabs"></div>
+
+  <select id="memberSel" class="member-sel" style="display:none"></select>
 
   <div class="picker">
     <label>查看日期</label>
@@ -732,25 +794,26 @@ def generate_html_report(assets, periods):
   <div class="ma-table" id="maTable"></div>
 
   <footer>
-    資料來源 FinMind（台指）／ Kraken（比特幣）／ Yahoo Finance（那斯達克・費半）<br>
+    資料來源 FinMind（台指・台股）／ Kraken（比特幣）／ Yahoo Finance（美股）<br>
     本頁產生時間 __GEN__ · 歷史判定為依當日（含）之前資料回推計算<br>
     僅供研究參考，非投資建議
   </footer>
 </div>
 
 <script>
-const ASSETS = __DATA__;
+const GROUPS = __DATA__;
 const PERIODS = __PERIODS__;
-const VC = { trend:"#D4A73C", range:"#8B7EC8", watch:"#D98A3D" };
-const ST = { expanding:"擴大中 ↑", contracting:"收斂中 ↓", flat:"持平 →" };
 
-let curAsset = 0, curIdx = 0, DATES = [];
+let curGroup = 0, curMember = 0, curIdx = 0, DATES = [];
 
 const tabsEl = document.getElementById("tabs");
 const eyebrowEl = document.getElementById("eyebrow");
+const memberSel = document.getElementById("memberSel");
 const dateInput = document.getElementById("dateInput");
 const prevBtn = document.getElementById("prevBtn");
 const nextBtn = document.getElementById("nextBtn");
+
+function curHist() { return GROUPS[curGroup].members[curMember].history; }
 
 function fmt(v, d) {
   if (v === null || v === undefined) return "—";
@@ -775,31 +838,52 @@ function nearestIdx(dateStr) {
   return found >= 0 ? found : 0;
 }
 
-// 建立頁籤
-ASSETS.forEach(function (a, i) {
+// 建立頁籤（每個群組一個頁籤）
+GROUPS.forEach(function (g, i) {
   const t = document.createElement("div");
   t.className = "tab";
-  t.textContent = a.name;
-  t.addEventListener("click", function () { switchAsset(i); });
+  t.textContent = g.name;
+  t.addEventListener("click", function () { switchGroup(i); });
   tabsEl.appendChild(t);
 });
+memberSel.addEventListener("change", function () { loadMember(Number(memberSel.value)); });
 
-function switchAsset(i) {
-  curAsset = i;
-  const hist = ASSETS[i].history;
-  DATES = hist.map(function (r) { return r.last_date; });
-  dateInput.min = DATES[0];
-  dateInput.max = DATES[DATES.length - 1];
-  eyebrowEl.textContent = ASSETS[i].name + " · 日K自動判斷";
+function switchGroup(i) {
+  curGroup = i;
+  const g = GROUPS[i];
   for (let j = 0; j < tabsEl.children.length; j++) {
     tabsEl.children[j].classList.toggle("active", j === i);
   }
-  render(hist.length - 1);
+  // 成員下拉：>1 個才顯示
+  memberSel.innerHTML = "";
+  if (g.members.length > 1) {
+    g.members.forEach(function (m, j) {
+      const o = document.createElement("option");
+      o.value = j;
+      o.textContent = m.name;
+      memberSel.appendChild(o);
+    });
+    memberSel.value = "0";
+    memberSel.style.display = "";
+  } else {
+    memberSel.style.display = "none";
+  }
+  loadMember(0);
+}
+
+function loadMember(j) {
+  curMember = j;
+  const m = GROUPS[curGroup].members[j];
+  DATES = m.history.map(function (r) { return r.last_date; });
+  dateInput.min = DATES[0];
+  dateInput.max = DATES[DATES.length - 1];
+  eyebrowEl.textContent = m.name + " · 日K自動判斷";
+  render(m.history.length - 1);
 }
 
 function render(idx) {
   curIdx = idx;
-  const hist = ASSETS[curAsset].history;
+  const hist = curHist();
   const r = hist[idx];
   const isLatest = idx === hist.length - 1;
   dateInput.value = r.last_date;
@@ -894,11 +978,11 @@ dateInput.addEventListener("change", function () {
 });
 prevBtn.addEventListener("click", function () { if (curIdx > 0) render(curIdx - 1); });
 nextBtn.addEventListener("click", function () {
-  if (curIdx < ASSETS[curAsset].history.length - 1) render(curIdx + 1);
+  if (curIdx < curHist().length - 1) render(curIdx + 1);
 });
 
-// 預設顯示第一個商品的最新一天
-switchAsset(0);
+// 預設顯示第一個頁籤的最新一天
+switchGroup(0);
 </script>
 </body>
 </html>
@@ -915,10 +999,13 @@ switchAsset(0);
 # ---------------------------------------------------------------------------
 
 def build_asset(cfg, periods, body_thresh, streak_thresh, lookback, history_days, hist_max):
-    if cfg["kind"] == "futures":
+    if cfg["kind"] in ("futures", "stock"):
         end = datetime.date.today()
         start = end - datetime.timedelta(days=history_days * 2)
-        bars = fetch_futures_daily(cfg["id"], start.isoformat(), end.isoformat())
+        if cfg["kind"] == "futures":
+            bars = fetch_futures_daily(cfg["id"], start.isoformat(), end.isoformat())
+        else:
+            bars = fetch_stock_daily(cfg["id"], start.isoformat(), end.isoformat())
     elif cfg["kind"] == "crypto":
         bars = fetch_crypto_daily(cfg["pair"])
     elif cfg["kind"] == "index":
@@ -932,45 +1019,50 @@ def build_asset(cfg, periods, body_thresh, streak_thresh, lookback, history_days
     return {"key": cfg["key"], "name": cfg["name"], "history": history}
 
 
-def run_all(assets_cfg=None, periods=None, body_thresh_pct=40, streak_thresh=3,
+def run_all(groups_cfg=None, periods=None, body_thresh_pct=40, streak_thresh=3,
             lookback=6, history_days=200, hist_max=180, output_path="index.html"):
-    if assets_cfg is None:
-        assets_cfg = ASSETS
+    if groups_cfg is None:
+        groups_cfg = ASSET_GROUPS
     if periods is None:
         periods = [5, 10, 20, 60]
     body_thresh = body_thresh_pct / 100.0
 
     if not FINMIND_TOKEN:
-        print("（未設定 FINMIND_TOKEN，台指以匿名額度抓取，仍可運作）")
+        print("（未設定 FINMIND_TOKEN，台指/台股以匿名額度抓取，仍可運作）")
 
-    results = []
-    for cfg in assets_cfg:
-        print("抓取並分析 %s（%s）..." % (cfg["name"], cfg["key"]))
-        try:
-            res = build_asset(cfg, periods, body_thresh, streak_thresh, lookback, history_days, hist_max)
-        except Exception as e:  # 單一商品失敗不影響其他商品
-            print("  ! %s 失敗，略過：%s" % (cfg["key"], e), file=sys.stderr)
-            continue
-        latest = res["history"][-1]
-        print("  %s：%d 天可查，最新 %s → %s"
-              % (cfg["key"], len(res["history"]), latest["last_date"], latest["verdict_label"]))
-        results.append(res)
+    groups = []
+    for g in groups_cfg:
+        members = []
+        for cfg in g["members"]:
+            print("抓取並分析 %s（%s）..." % (cfg["name"], cfg["key"]))
+            try:
+                res = build_asset(cfg, periods, body_thresh, streak_thresh, lookback, history_days, hist_max)
+            except Exception as e:  # 單一商品失敗不影響其他
+                print("  ! %s 失敗，略過：%s" % (cfg["key"], e), file=sys.stderr)
+                continue
+            latest = res["history"][-1]
+            print("  %s：%d 天可查，最新 %s → %s"
+                  % (cfg["key"], len(res["history"]), latest["last_date"], latest["state_label"]))
+            members.append(res)
+        if members:
+            groups.append({"key": g["key"], "name": g["name"], "members": members})
 
-    if not results:
+    if not groups:
         raise RuntimeError("所有商品都抓取失敗，無法產生報告。")
 
     print("產生 HTML 報告 ...")
-    html = generate_html_report(results, periods)
+    html = generate_html_report(groups, periods)
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(html)
-    print("完成！已寫入 %s（%d 個商品）。" % (output_path, len(results)))
-    return results
+    n_members = sum(len(g["members"]) for g in groups)
+    print("完成！已寫入 %s（%d 頁籤 / %d 商品）。" % (output_path, len(groups), n_members))
+    return groups
 
 
 if __name__ == "__main__":
     try:
         run_all(
-            assets_cfg=ASSETS,
+            groups_cfg=ASSET_GROUPS,
             periods=[5, 10, 20, 60],
             body_thresh_pct=40,
             streak_thresh=3,
