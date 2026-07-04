@@ -526,7 +526,7 @@ _STATE_META = {
     "turn_up":    ("趨勢受阻", "站上10日線，空方趨勢受阻。",
                    "空單回補", "#E5484D", "act-hold-long"),
     "none":       ("無明確趨勢", "尚未形成明確趨勢，區間短做或觀望。",
-                   "短做／觀望", "#8B919B", "act-scalp"),
+                   "趨勢未明", "#8B919B", "act-scalp"),
 }
 
 
@@ -611,18 +611,28 @@ def build_history(bars, periods, body_thresh, streak_thresh, lookback, max_days=
         if state == "none":
             fresh = (rec["signal_n"] >= 1 and rec["signal_dir"] in ("up", "down")
                      and (rec["signal_dir"] == prev_sig_dir or rec["signal_dir"] == pending_dir))
-            if fresh:                       # 新鮮試單（或反向的持續訊號 → 反轉方向）
+            if fresh:                       # 新鮮試單（或同向連2天 → 確立/反轉方向）
                 pending_dir = rec["signal_dir"]
-            if pending_dir == "up":
-                rec["accent"] = "#E5484D"
-                rec["action_class"] = "act-hold-long"
-                rec["action_label"] = "訊號浮現 · 可嘗試建立多單" if fresh else "趨勢可能成形"
-            elif pending_dir == "down":
-                rec["accent"] = "#3DAE73"
-                rec["action_class"] = "act-hold-short"
-                rec["action_label"] = "訊號浮現 · 可嘗試建立空單" if fresh else "趨勢可能成形"
-            if not fresh:                   # 沿用中（非新鮮）不顯示箭頭，避免反覆
-                rec["arrow_dir"], rec["arrow_n"] = "none", 0
+            if pending_dir in ("up", "down"):
+                # 三個徽章各自方向，數與 pending 相反的個數
+                type_d = rec["conv_dir"] if rec["conv"] == "diverge" else "flat"
+                tri_d = ("up" if rec["triband"] in ("above", "break_up")
+                         else "down" if rec["triband"] in ("below", "break_dn") else "flat")
+                mom_d = rec["momentum"] if rec["momentum"] in ("up", "down") else "flat"
+                opp = "down" if pending_dir == "up" else "up"
+                conflicts = sum(1 for x in (type_d, tri_d, mom_d) if x == opp)
+                if conflicts >= 2:          # 兩個以上徽章打架 → 回中性灰「短做／觀望」
+                    rec["arrow_dir"], rec["arrow_n"] = "none", 0
+                    pending_dir = "none"    # accent/建議維持 _STATE_META 灰色「短做／觀望」
+                else:
+                    rec["accent"] = "#E5484D" if pending_dir == "up" else "#3DAE73"
+                    rec["action_class"] = "act-hold-long" if pending_dir == "up" else "act-hold-short"
+                    if fresh:
+                        rec["action_label"] = ("訊號浮現 · 可嘗試建立多單" if pending_dir == "up"
+                                               else "訊號浮現 · 可嘗試建立空單")
+                    else:                   # 沿用中（非新鮮）不顯示箭頭
+                        rec["action_label"] = "趨勢可能成形"
+                        rec["arrow_dir"], rec["arrow_n"] = "none", 0
         else:
             pending_dir = "none"            # 進入趨勢/轉折 → 重置 pending
 
