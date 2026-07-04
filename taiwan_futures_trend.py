@@ -714,9 +714,9 @@ def generate_html_report(groups, periods):
   .dir-warn { color:#D98A3D; }
   .dir-flat { color:var(--muted); }
   .dir-soft { color:var(--muted); }                     /* 盤整：柔和 */
-  .dir-chop { color:#0B0D10; background:#F5A623; padding:1px 6px; border-radius:6px; font-weight:700; }  /* 震盪：醒目 */
-  .tri-break-up { color:#0B0D10; background:#E5484D; padding:1px 6px; border-radius:6px; font-weight:700; }   /* 糾結突破↑ 醒目紅 */
-  .tri-break-dn { color:#0B0D10; background:#3DAE73; padding:1px 6px; border-radius:6px; font-weight:700; }   /* 糾結跌破↓ 醒目綠 */
+  .dir-chop { color:#F5A623; font-weight:700; }       /* 震盪：橘字 */
+  .tri-break-up { color:#E5484D; font-weight:700; }   /* 糾結突破↑ 紅字 */
+  .tri-break-dn { color:#3DAE73; font-weight:700; }   /* 糾結跌破↓ 綠字 */
 
   .stats { display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:10px; margin-bottom:22px; }
   .stat { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:14px; }
