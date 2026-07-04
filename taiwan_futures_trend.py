@@ -704,10 +704,10 @@ def generate_html_report(groups, periods):
     font-size:15px; border:1px dashed; }
   .add-long { color:#E5484D; border-color:#E5484D; background:rgba(229,72,77,.10); }
   .add-short { color:#3DAE73; border-color:#3DAE73; background:rgba(61,174,115,.10); }
-  .dirs { display:flex; gap:6px; margin-top:16px; flex-wrap:wrap; }
+  .dirs { display:flex; gap:6px; margin-top:16px; flex-wrap:nowrap; overflow-x:auto; }
   .chip { flex:0 0 auto; white-space:nowrap; font-size:12px;
     color:var(--muted); background:#1B1F26; border:1px solid var(--line);
-    border-radius:18px; padding:6px 11px; }
+    border-radius:18px; padding:6px 11px; transition:border-color .12s; }
   .chip b { font-weight:600; margin-left:4px; font-size:12.5px; }
   .dir-up { color:var(--down); }   /* 多／偏多＝紅（台股慣例 漲紅） */
   .dir-down { color:var(--up); }   /* 空／偏空＝綠（跌綠） */
@@ -777,9 +777,9 @@ def generate_html_report(groups, periods):
     <div class="action" id="actionBox"></div>
     <div class="addon" id="addonBox"></div>
     <div class="dirs">
-      <span class="chip">型態<b class="dir-val" id="alignVal"></b></span>
-      <span class="chip">短線<b class="dir-val" id="momVal"></b></span>
-      <span class="chip">三線<b class="dir-val" id="triVal"></b></span>
+      <span class="chip" id="chipType">型態<b class="dir-val" id="alignVal"></b></span>
+      <span class="chip" id="chipTri">三線<b class="dir-val" id="triVal"></b></span>
+      <span class="chip" id="chipMom">短線<b class="dir-val" id="momVal"></b></span>
     </div>
   </div>
 
@@ -842,6 +842,24 @@ function nearestIdx(dateStr) {
   let found = -1;
   for (let i = 0; i < DATES.length; i++) { if (DATES[i] <= dateStr) found = i; else break; }
   return found >= 0 ? found : 0;
+}
+// 徽章外框色：多紅 空綠 震盪/糾結橘 其餘用預設灰（回傳空字串）
+function chipColor(kind, r) {
+  if (kind === "type") {
+    if (r.conv === "chop") return "#F5A623";
+    if (r.conv === "diverge") return r.trend_dir === "long" ? "#E5484D" : r.trend_dir === "short" ? "#3DAE73" : "";
+    return "";
+  }
+  if (kind === "mom") {
+    return r.momentum === "up" ? "#E5484D" : r.momentum === "down" ? "#3DAE73" : "";
+  }
+  if (kind === "tri") {
+    if (r.triband === "above" || r.triband === "break_up") return "#E5484D";
+    if (r.triband === "below" || r.triband === "break_dn") return "#3DAE73";
+    if (r.triband === "coil") return "#F5A623";
+    return "";
+  }
+  return "";
 }
 
 // 建立頁籤（每個群組一個頁籤）
@@ -941,6 +959,10 @@ function render(idx) {
                : r.triband === "below" ? "dir-down"
                : r.triband === "coil" ? "dir-warn" : "dir-flat";
   triEl.className = "dir-val " + tclass;
+
+  document.getElementById("chipType").style.borderColor = chipColor("type", r);
+  document.getElementById("chipTri").style.borderColor = chipColor("tri", r);
+  document.getElementById("chipMom").style.borderColor = chipColor("mom", r);
 
   // 強訊號箭頭：2 項→1 箭頭、3 項→2 箭頭
   const arrow = document.getElementById("signalArrow");
