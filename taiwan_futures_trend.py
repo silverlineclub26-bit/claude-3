@@ -547,6 +547,7 @@ def build_history(bars, periods, body_thresh, streak_thresh, lookback, max_days=
     side = "none"
     strong_up = dipped_up = strong_dn = dipped_dn = False  # 加碼追蹤：本波是否確認過兩箭頭、之後是否回檔
     prev_tri = None  # 前一根三線狀態（用於偵測糾結突破的當天）
+    prev_state = None  # 前一根狀態（用於偵測站回5日的加碼）
     prev_sig_dir = "none"  # 前一根訊號方向（無趨勢試單需連續同向才建議，避免單日翻面）
     pending_dir = "none"   # 無趨勢期間浮現的方向，carry-forward 到反轉或趨勢成形
     for rec in records:
@@ -669,7 +670,14 @@ def build_history(bars, periods, body_thresh, streak_thresh, lookback, max_days=
                 add_signal = "add_long"
             elif side == "short" and state == "down_hold" and dn_tri and not prev_dn_tri:
                 add_signal = "add_short"
+        # 站回5日加碼：確認趨勢後，從整理(破5日)回到續抱(站回5日) → 順勢加碼
+        if add_signal == "none" and rec["conv"] != "chop":
+            if side == "long" and state == "up_hold" and prev_state == "up_range":
+                add_signal = "add_long"
+            elif side == "short" and state == "down_hold" and prev_state == "down_range":
+                add_signal = "add_short"
         prev_tri = rec["triband"]
+        prev_state = state
         prev_sig_dir = rec["signal_dir"]
 
         rec["add_signal"] = add_signal
