@@ -547,6 +547,7 @@ def build_history(bars, periods, body_thresh, streak_thresh, lookback, max_days=
     side = "none"
     strong_up = dipped_up = strong_dn = dipped_dn = False  # 加碼追蹤：本波是否確認過兩箭頭、之後是否回檔
     prev_tri = None  # 前一根三線狀態（用於偵測糾結突破的當天）
+    prev_sig_dir = "none"  # 前一根訊號方向（無趨勢試單需連續同向才建議，避免單日翻面）
     for rec in records:
         close = rec["last_close"]
         ma5 = rec["ma_now"].get(p5)
@@ -599,8 +600,8 @@ def build_history(bars, periods, body_thresh, streak_thresh, lookback, max_days=
             rec["signal_dir"], nn = "none", 0
         rec["signal_n"] = max(0, nn - 1)   # 2項→1箭頭、3項→2箭頭、4項→3箭頭
 
-        # 無明確趨勢但已浮現箭頭 → 別只保守，建議可試單（標題仍維持無趨勢）
-        if state == "none" and rec["signal_n"] >= 1:
+        # 無明確趨勢但已浮現箭頭且連續 2 天同方向 → 建議可試單（單日翻面不算，避免洗盤反覆）
+        if state == "none" and rec["signal_n"] >= 1 and rec["signal_dir"] == prev_sig_dir:
             if rec["signal_dir"] == "up":
                 rec["action_label"] = "訊號浮現 · 可嘗試建立多單"
                 rec["action_class"] = "act-hold-long"
@@ -642,6 +643,7 @@ def build_history(bars, periods, body_thresh, streak_thresh, lookback, max_days=
             elif side == "short" and state == "down_hold" and dn_tri and not prev_dn_tri:
                 add_signal = "add_short"
         prev_tri = rec["triband"]
+        prev_sig_dir = rec["signal_dir"]
 
         rec["add_signal"] = add_signal
         rec["add_label"] = ("趨勢加碼點 · 順勢加碼多單" if add_signal == "add_long"
