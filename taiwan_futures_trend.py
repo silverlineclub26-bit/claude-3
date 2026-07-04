@@ -45,7 +45,10 @@ ASSET_GROUPS = [
         {"key": "SOX", "name": "費半", "kind": "index", "symbol": "^SOX"}]},
     {"key": "STK", "name": "股票", "members": [
         {"key": "2330", "name": "台積電 2330", "kind": "stock", "id": "2330"},
-        {"key": "3481", "name": "群創 3481", "kind": "stock", "id": "3481"}]},
+        {"key": "3481", "name": "群創 3481", "kind": "stock", "id": "3481"},
+        {"key": "2409", "name": "友達 2409", "kind": "stock", "id": "2409"},
+        {"key": "2313", "name": "華通 2313", "kind": "stock", "id": "2313"},
+        {"key": "3227", "name": "原相 3227", "kind": "stock", "id": "3227"}]},
 ]
 
 
@@ -699,11 +702,11 @@ def generate_html_report(groups, periods):
     font-size:15px; border:1px dashed; }
   .add-long { color:#E5484D; border-color:#E5484D; background:rgba(229,72,77,.10); }
   .add-short { color:#3DAE73; border-color:#3DAE73; background:rgba(61,174,115,.10); }
-  .dirs { display:flex; gap:6px; margin-top:16px; flex-wrap:nowrap; overflow-x:auto; }
-  .chip { flex:1 1 0; min-width:0; text-align:center; white-space:nowrap; font-size:11.5px;
+  .dirs { display:flex; gap:6px; margin-top:16px; flex-wrap:wrap; }
+  .chip { flex:0 0 auto; white-space:nowrap; font-size:12px;
     color:var(--muted); background:#1B1F26; border:1px solid var(--line);
-    border-radius:18px; padding:6px 6px; }
-  .chip b { font-weight:600; margin-left:4px; font-size:12px; }
+    border-radius:18px; padding:6px 11px; }
+  .chip b { font-weight:600; margin-left:4px; font-size:12.5px; }
   .dir-up { color:var(--down); }   /* 多／偏多＝紅（台股慣例 漲紅） */
   .dir-down { color:var(--up); }   /* 空／偏空＝綠（跌綠） */
   .dir-warn { color:#D98A3D; }
@@ -772,8 +775,8 @@ def generate_html_report(groups, periods):
     <div class="action" id="actionBox"></div>
     <div class="addon" id="addonBox"></div>
     <div class="dirs">
-      <span class="chip">均線型態<b class="dir-val" id="alignVal"></b></span>
-      <span class="chip">短線方向<b class="dir-val" id="momVal"></b></span>
+      <span class="chip">型態<b class="dir-val" id="alignVal"></b></span>
+      <span class="chip">短線<b class="dir-val" id="momVal"></b></span>
       <span class="chip">三線<b class="dir-val" id="triVal"></b></span>
     </div>
   </div>
@@ -803,6 +806,7 @@ def generate_html_report(groups, periods):
 <script>
 const GROUPS = __DATA__;
 const PERIODS = __PERIODS__;
+const ST = { expanding:"擴大中 ↑", contracting:"收斂中 ↓", flat:"持平 →" };
 
 let curGroup = 0, curMember = 0, curIdx = 0, DATES = [];
 
